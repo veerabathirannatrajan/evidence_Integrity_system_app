@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "715846110086",
+    "project_id": "evidence-system-6f225",
+    "storage_bucket": "evidence-system-6f225.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:715846110086:android:de4efb14fc51cc78653a07",
+        "android_client_info": {
+          "package_name": "com.veera.evidence_app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "715846110086-olpk3u9sgecmv54nc8dhpb8nh8kjp4q9.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAGnlADvalHJHdFvtqPy-8bQd4OS5qqc-U"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "715846110086-olpk3u9sgecmv54nc8dhpb8nh8kjp4q9.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
