@@ -52,16 +52,14 @@ class DefaultFirebaseOptions {
     messagingSenderId: '715846110086',
     projectId: 'evidence-system-6f225',
     authDomain: 'evidence-system-6f225.firebaseapp.com',
-    storageBucket: 'evidence-system-6f225.firebasestorage.app',
-  );
+    storageBucket: 'evidence-system-6f225.firebasestorage.app',  );
 
   static const FirebaseOptions android = FirebaseOptions(
     apiKey: 'AIzaSyAGnlADvalHJHdFvtqPy-8bQd4OS5qqc-U',
     appId: '1:715846110086:android:de4efb14fc51cc78653a07',
     messagingSenderId: '715846110086',
     projectId: 'evidence-system-6f225',
-    storageBucket: 'evidence-system-6f225.firebasestorage.app',
-  );
+    storageBucket: 'evidence-system-6f225.firebasestorage.app',  );
 
   static const FirebaseOptions windows = FirebaseOptions(
     apiKey: 'AIzaSyAld9Xib_K5kqABB2m4c_6LfS1vUFZVWU0',
@@ -69,6 +67,5 @@ class DefaultFirebaseOptions {
     messagingSenderId: '715846110086',
     projectId: 'evidence-system-6f225',
     authDomain: 'evidence-system-6f225.firebaseapp.com',
-    storageBucket: 'evidence-system-6f225.firebasestorage.app',
-  );
+    storageBucket: 'evidence-system-6f225.firebasestorage.app',  );
 }

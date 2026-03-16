@@ -5,12 +5,8 @@ import 'package:http_parser/http_parser.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 class ApiService {
-  // If using Windows desktop app: http://localhost:5000
-  // If using Android emulator:    http://10.0.2.2:5000
-  // If using real device on WiFi: http://192.168.x.x:5000
   static const String baseUrl = 'http://localhost:5000';
 
-  // ── Auth token ────────────────────────────────────────────────
   Future<String> _getToken() async {
     final token = await FirebaseAuth.instance.currentUser?.getIdToken();
     if (token == null) throw Exception('Not logged in');
@@ -22,9 +18,9 @@ class ApiService {
     'Content-Type': 'application/json',
   };
 
-  // ════════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════
   // USER
-  // ════════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════
 
   Future<Map> createUser(
       String uid, String name, String email, String role) async {
@@ -38,20 +34,21 @@ class ApiService {
     return jsonDecode(res.body);
   }
 
+  /// GET /api/user/me — gets role from MongoDB
   Future<Map<String, dynamic>> getMe() async {
     final token = await _getToken();
     final res = await http.get(
       Uri.parse('$baseUrl/api/user/me'),
       headers: _headers(token),
     );
-    return jsonDecode(res.body);
+    if (res.statusCode == 200) return jsonDecode(res.body);
+    throw Exception('Failed to get user: ${res.statusCode}');
   }
 
-  // ════════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════
   // CASES
-  // ════════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════
 
-  /// POST /api/cases
   Future<Map<String, dynamic>> createCase(
       String title,
       String description, {
@@ -83,12 +80,9 @@ class ApiService {
         throw Exception(data['message'] ?? 'Failed to create case');
       }
       return data;
-    } catch (e) {
-      rethrow;
-    }
+    } catch (e) { rethrow; }
   }
 
-  /// GET /api/cases
   Future<List<dynamic>> getAllCases() async {
     try {
       final token = await _getToken();
@@ -97,13 +91,10 @@ class ApiService {
         headers: _headers(token),
       );
       if (res.statusCode == 200) return jsonDecode(res.body);
-      throw Exception('Failed to load cases: ${res.statusCode}');
-    } catch (e) {
-      return [];
-    }
+      throw Exception('Failed to load cases');
+    } catch (e) { return []; }
   }
 
-  /// GET /api/cases/:id
   Future<Map<String, dynamic>> getCaseById(String id) async {
     final token = await _getToken();
     final res = await http.get(
@@ -114,18 +105,11 @@ class ApiService {
     throw Exception('Case not found');
   }
 
-  /// PATCH /api/cases/:id — update full case
-  Future<Map<String, dynamic>> updateCase(
-      String id, {
-        String? title,
-        String? description,
-        String? priority,
-        String? caseType,
-        String? location,
-        String? caseRef,
-        String? incidentDate,
-        String? status,
-      }) async {
+  Future<Map<String, dynamic>> updateCase(String id, {
+    String? title, String? description, String? priority,
+    String? caseType, String? location, String? caseRef,
+    String? incidentDate, String? status,
+  }) async {
     final token = await _getToken();
     final Map<String, dynamic> body = {};
     if (title != null)        body['title']        = title.trim();
@@ -136,7 +120,6 @@ class ApiService {
     if (caseRef != null)      body['caseRef']      = caseRef.trim();
     if (incidentDate != null) body['incidentDate'] = incidentDate;
     if (status != null)       body['status']       = status;
-
     final res = await http.patch(
       Uri.parse('$baseUrl/api/cases/$id'),
       headers: _headers(token),
@@ -149,7 +132,6 @@ class ApiService {
     return data;
   }
 
-  /// PATCH /api/cases/:id/status
   Future<Map<String, dynamic>> updateCaseStatus(
       String id, String status) async {
     final token = await _getToken();
@@ -165,7 +147,6 @@ class ApiService {
     return data;
   }
 
-  /// DELETE /api/cases/:id
   Future<Map<String, dynamic>> deleteCase(String id) async {
     final token = await _getToken();
     final res = await http.delete(
@@ -179,7 +160,6 @@ class ApiService {
     return data;
   }
 
-  /// GET /api/cases/stats
   Future<Map<String, dynamic>> getCaseStats() async {
     try {
       final token = await _getToken();
@@ -201,13 +181,10 @@ class ApiService {
     }
   }
 
-  // ════════════════════════════════════════════════════════════
-  // EVIDENCE — UPLOAD (bytes-based, works on Windows/Web/Mobile)
-  // ════════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════
+  // EVIDENCE — UPLOAD
+  // ══════════════════════════════════════════════════════════
 
-  /// Upload evidence using raw bytes.
-  /// Works on Windows desktop, Web, Android, and iOS.
-  /// Never use File(path) — path is not available on Windows/Web.
   Future<Map<String, dynamic>> uploadEvidenceBytes(
       Uint8List bytes,
       String fileName,
@@ -218,42 +195,28 @@ class ApiService {
       }) async {
     final token   = await _getToken();
     final request = http.MultipartRequest(
-      'POST',
-      Uri.parse('$baseUrl/api/evidence/upload'),
-    );
-
+        'POST', Uri.parse('$baseUrl/api/evidence/upload'));
     request.headers['Authorization'] = 'Bearer $token';
-
-    // Attach file as raw bytes — no File(path) needed
-    request.files.add(
-      http.MultipartFile.fromBytes(
-        'file',
-        bytes,
+    request.files.add(http.MultipartFile.fromBytes(
+        'file', bytes,
         filename:    fileName,
-        contentType: MediaType.parse(mimeType),
-      ),
-    );
-
+        contentType: MediaType.parse(mimeType)));
     request.fields['caseId']       = caseId;
     request.fields['description']  = description;
     request.fields['evidenceType'] = evidenceType;
-
     final streamed = await request.send();
     final res      = await http.Response.fromStream(streamed);
     final data     = jsonDecode(res.body);
-
     if (res.statusCode != 201) {
       throw Exception(data['message'] ?? 'Upload failed');
     }
     return data;
   }
 
-  // ════════════════════════════════════════════════════════════
-  // EVIDENCE — VERIFY (bytes-based, works on Windows/Web/Mobile)
-  // ════════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════
+  // EVIDENCE — VERIFY
+  // ══════════════════════════════════════════════════════════
 
-  /// Verify evidence integrity using raw bytes.
-  /// Works on Windows desktop, Web, Android, and iOS.
   Future<Map<String, dynamic>> verifyEvidenceBytes(
       Uint8List bytes,
       String fileName,
@@ -262,43 +225,44 @@ class ApiService {
       }) async {
     final token   = await _getToken();
     final request = http.MultipartRequest(
-      'POST',
-      Uri.parse('$baseUrl/api/evidence/verify'),
-    );
-
+        'POST', Uri.parse('$baseUrl/api/evidence/verify'));
     request.headers['Authorization'] = 'Bearer $token';
-
-    request.files.add(
-      http.MultipartFile.fromBytes(
-        'file',
-        bytes,
+    request.files.add(http.MultipartFile.fromBytes(
+        'file', bytes,
         filename:    fileName,
-        contentType: MediaType.parse(mimeType),
-      ),
-    );
-
+        contentType: MediaType.parse(mimeType)));
     request.fields['evidenceId'] = evidenceId;
-
     final streamed = await request.send();
     final res      = await http.Response.fromStream(streamed);
     return jsonDecode(res.body);
   }
 
-  // ════════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════
   // EVIDENCE — READ
-  // ════════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════
 
-  /// GET /api/evidence/case/:caseId
+  /// Returns all cases with evidence counts and tamper stats
+  Future<List<dynamic>> getCasesWithEvidence() async {
+    final token = await _getToken();
+    final res = await http.get(
+      Uri.parse('$baseUrl/api/evidence/cases-with-evidence'),
+      headers: _headers(token),
+    );
+    if (res.statusCode == 200) return jsonDecode(res.body);
+    throw Exception('Failed to load cases with evidence');
+  }
+
+  /// Returns all evidence for a specific case (SINGLE definition)
   Future<List<dynamic>> getEvidenceByCase(String caseId) async {
     final token = await _getToken();
     final res = await http.get(
       Uri.parse('$baseUrl/api/evidence/case/$caseId'),
       headers: _headers(token),
     );
-    return jsonDecode(res.body);
+    if (res.statusCode == 200) return jsonDecode(res.body);
+    throw Exception('Failed to load evidence for case');
   }
 
-  /// GET /api/evidence/:id
   Future<Map<String, dynamic>> getEvidenceById(String id) async {
     final token = await _getToken();
     final res = await http.get(
@@ -308,19 +272,16 @@ class ApiService {
     return jsonDecode(res.body);
   }
 
-  /// GET /api/evidence/public/:id — no auth, used for QR scan
   Future<Map<String, dynamic>> getEvidencePublic(String id) async {
     final res = await http.get(
-      Uri.parse('$baseUrl/api/evidence/public/$id'),
-    );
+        Uri.parse('$baseUrl/api/evidence/public/$id'));
     return jsonDecode(res.body);
   }
 
-  // ════════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════
   // DASHBOARD STATS & ACTIVITY
-  // ════════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════
 
-  /// GET /api/evidence/stats
   Future<Map<String, dynamic>> getDashboardStats() async {
     try {
       final token = await _getToken();
@@ -341,7 +302,6 @@ class ApiService {
     }
   }
 
-  /// GET /api/evidence/recent-activity
   Future<Map<String, dynamic>> getRecentActivity() async {
     try {
       final token = await _getToken();
@@ -352,14 +312,10 @@ class ApiService {
       if (res.statusCode == 200) return jsonDecode(res.body);
       throw Exception('Failed to load activity');
     } catch (e) {
-      return {
-        'recentEvidence': [],
-        'recentCustody':  [],
-      };
+      return {'recentEvidence': [], 'recentCustody': []};
     }
   }
 
-  /// GET /api/evidence/recent/:limit
   Future<List<Map<String, dynamic>>> getRecentEvidence(
       {int limit = 5}) async {
     try {
@@ -375,12 +331,9 @@ class ApiService {
             .toList();
       }
       throw Exception('Failed to load recent evidence');
-    } catch (e) {
-      return [];
-    }
+    } catch (e) { return []; }
   }
 
-  /// GET /api/evidence/summary
   Future<Map<String, dynamic>> getEvidenceSummary() async {
     try {
       final token = await _getToken();
@@ -404,11 +357,10 @@ class ApiService {
     }
   }
 
-  // ════════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════
   // CUSTODY
-  // ════════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════
 
-  /// POST /api/custody/transfer
   Future<Map<String, dynamic>> transferEvidence(
       String evidenceId, String toUser, String reason) async {
     final token = await _getToken();
@@ -424,7 +376,6 @@ class ApiService {
     return jsonDecode(res.body);
   }
 
-  /// GET /api/custody/history/:evidenceId
   Future<Map<String, dynamic>> getCustodyHistory(
       String evidenceId) async {
     final token = await _getToken();
