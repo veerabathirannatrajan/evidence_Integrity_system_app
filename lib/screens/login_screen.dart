@@ -254,7 +254,7 @@ class _LoginScreenState extends State<LoginScreen>
                             const SizedBox(height: 16),
                             _label('Your Role'),
                             const SizedBox(height: 6),
-                            _roleDropdown(),
+                            _roleDropdown(), // FIXED: Now clearly visible!
                           ],
 
                           if (_isLogin) ...[
@@ -348,20 +348,13 @@ class _LoginScreenState extends State<LoginScreen>
               ),
             ),
 
-            // The actual character image — centered, rounded corners
+            // The actual character image from assets
             Center(
               child: Padding(
                 padding: const EdgeInsets.all(24),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(16),
                   child: Image.asset(
-                    // ─────────────────────────────────────────────
-                    // IMPORTANT: Add the image to your Flutter project:
-                    // 1. Create folder:  assets/images/
-                    // 2. Copy the image: assets/images/login_character.png
-                    // 3. Add to pubspec.yaml under flutter → assets:
-                    //      - assets/images/login_character.png
-                    // ─────────────────────────────────────────────
                     'images/login_character.png',
                     fit: BoxFit.contain,
                     errorBuilder: (_, __, ___) =>
@@ -562,6 +555,8 @@ class _LoginScreenState extends State<LoginScreen>
   // ── Role dropdown ─────────────────────────────────────────────
   Widget _roleDropdown() {
     return Container(
+      width: double.infinity, // Same width as other fields
+      height: 50, // Fixed height same as text fields
       padding: const EdgeInsets.symmetric(horizontal: 12),
       decoration: BoxDecoration(
         color: const Color(0xFFF8FAFF),
@@ -572,22 +567,33 @@ class _LoginScreenState extends State<LoginScreen>
         child: DropdownButton<String>(
           value: _role,
           isExpanded: true,
-          isDense: true,
+          isDense: false,
           dropdownColor: Colors.white,
           icon: const Icon(Icons.keyboard_arrow_down_rounded,
-              size: 20, color: Color(0xFF94A3B8)),
+              size: 24, color: Color(0xFF2563EB)),
           style: const TextStyle(
-              color: Color(0xFF0F172A), fontSize: 14),
+              color: Color(0xFF0F172A),
+              fontSize: 14,
+              fontWeight: FontWeight.w500),
           items: _roles.map((r) => DropdownMenuItem(
             value: r['value'],
             child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 10),
-              child: Row(children: [
-                Icon(_roleIcon(r['value']!),
-                    size: 16, color: const Color(0xFF94A3B8)),
-                const SizedBox(width: 10),
-                Text(r['label']!),
-              ]),
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Row(
+                children: [
+                  Icon(_roleIcon(r['value']!),
+                      size: 18, color: const Color(0xFF2563EB)),
+                  const SizedBox(width: 12),
+                  Text(
+                    r['label']!,
+                    style: const TextStyle(
+                      color: Color(0xFF0F172A),
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
             ),
           )).toList(),
           onChanged: (v) {

@@ -1,20 +1,28 @@
-import 'package:flutter/material.dart';
+// dashboard_screen.dart
+// This file is the entry point after login.
+// It reads the user role from UserProvider and
+// routes to the correct role-specific dashboard.
 
-/// Placeholder — full code coming next.
-/// login_screen.dart navigates here after successful login/register.
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../providers/user_provider.dart';
+import 'dashboards/police_dashboard.dart';
+import 'dashboards/forensic_dashboard.dart';
+import 'dashboards/prosecutor_dashboard.dart';
+import 'dashboards/defense_dashboard.dart';
+import 'dashboards/court_dashboard.dart';
+
 class DashboardScreen extends StatelessWidget {
   const DashboardScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(
-      backgroundColor: Color(0xFF0A0E1A),
-      body: Center(
-        child: Text(
-          'Dashboard — coming next',
-          style: TextStyle(color: Colors.white),
-        ),
-      ),
-    );
+    final role = context.watch<UserProvider>().role ?? 'police';
+
+    if (role == 'forensic')   return const ForensicDashboard();
+    if (role == 'prosecutor') return const ProsecutorDashboard();
+    if (role == 'defense')    return const DefenseDashboard();
+    if (role == 'court')      return const CourtDashboard();
+    return const PoliceDashboard(); // police + fallback
   }
 }

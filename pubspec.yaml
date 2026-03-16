@@ -59,6 +59,8 @@ dependencies:
   # State management (to hold user role across all screens)
   provider: ^6.1.0
   flutter_svg: ^2.0.10
+  http_parser: ^4.0.2
+
 
 
 
