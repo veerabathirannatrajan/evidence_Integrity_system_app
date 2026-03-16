@@ -4,28 +4,22 @@ import 'package:provider/provider.dart';
 import 'providers/user_provider.dart';
 import 'providers/theme_provider.dart';
 import 'screens/splash_screen.dart';
-import 'firebase_options.dart'; // ← ADD THIS IMPORT
+import 'firebase_options.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  try {
-    // FOR WEB: Must provide options
+  // Guard against duplicate-app error on hot restart
+  if (Firebase.apps.isEmpty) {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
-    print('✅ Firebase initialized for ${DefaultFirebaseOptions.currentPlatform}');
-  } catch (e, stack) {
-    print('❌ Firebase error: $e');
-    print('Stack: $stack');
   }
 
   runApp(const EvidenceApp());
 }
 
 class EvidenceApp extends StatelessWidget {
-
-
   const EvidenceApp({super.key});
 
   @override
@@ -39,7 +33,7 @@ class EvidenceApp extends StatelessWidget {
         builder: (_, theme, __) => MaterialApp(
           title: 'EvidenceChain',
           debugShowCheckedModeBanner: false,
-          theme: ThemeProvider.light,
+          theme:     ThemeProvider.light,
           darkTheme: ThemeProvider.dark,
           themeMode: theme.isDark ? ThemeMode.dark : ThemeMode.light,
           home: const SplashScreen(),
@@ -48,4 +42,3 @@ class EvidenceApp extends StatelessWidget {
     );
   }
 }
-

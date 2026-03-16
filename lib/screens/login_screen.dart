@@ -78,7 +78,7 @@ class _LoginScreenState extends State<LoginScreen>
       if (_isLogin) {
         await _auth.login(
             _emailCtrl.text.trim(), _passwordCtrl.text.trim());
-        await context.read<UserProvider>().loadFromFirebase();
+        await context.read<UserProvider>().loadFromBackend();
         if (mounted) _nav();
       } else {
         final u = await _auth.register(
@@ -86,7 +86,7 @@ class _LoginScreenState extends State<LoginScreen>
         if (u != null) {
           await _api.createUser(u.uid, _nameCtrl.text.trim(),
               _emailCtrl.text.trim(), _role);
-          await context.read<UserProvider>().loadFromFirebase();
+          await context.read<UserProvider>().loadFromBackend();
           if (mounted) _nav();
         }
       }
@@ -254,7 +254,7 @@ class _LoginScreenState extends State<LoginScreen>
                             const SizedBox(height: 16),
                             _label('Your Role'),
                             const SizedBox(height: 6),
-                            _roleDropdown(), // FIXED: Now clearly visible!
+                            _roleDropdown(),
                           ],
 
                           if (_isLogin) ...[
@@ -348,14 +348,21 @@ class _LoginScreenState extends State<LoginScreen>
               ),
             ),
 
-            // The actual character image from assets
+            // The actual character image — centered, rounded corners
             Center(
               child: Padding(
                 padding: const EdgeInsets.all(24),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(16),
                   child: Image.asset(
-                    'images/login_character.png',
+                    // ─────────────────────────────────────────────
+                    // IMPORTANT: Add the image to your Flutter project:
+                    // 1. Create folder:  assets/images/
+                    // 2. Copy the image: assets/images/login_character.png
+                    // 3. Add to pubspec.yaml under flutter → assets:
+                    //      - assets/images/login_character.png
+                    // ─────────────────────────────────────────────
+                    'assets/images/login_character.png',
                     fit: BoxFit.contain,
                     errorBuilder: (_, __, ___) =>
                         _characterFallback(),
@@ -553,54 +560,58 @@ class _LoginScreenState extends State<LoginScreen>
   }
 
   // ── Role dropdown ─────────────────────────────────────────────
+  // ── Role dropdown ─────────────────────────────────────────────
+  // ── Role dropdown ─────────────────────────────────────────────
   Widget _roleDropdown() {
-    return Container(
-      width: double.infinity, // Same width as other fields
-      height: 50, // Fixed height same as text fields
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFF),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
-      child: DropdownButtonHideUnderline(
-        child: DropdownButton<String>(
-          value: _role,
-          isExpanded: true,
-          isDense: false,
-          dropdownColor: Colors.white,
-          icon: const Icon(Icons.keyboard_arrow_down_rounded,
-              size: 24, color: Color(0xFF2563EB)),
-          style: const TextStyle(
-              color: Color(0xFF0F172A),
-              fontSize: 14,
-              fontWeight: FontWeight.w500),
-          items: _roles.map((r) => DropdownMenuItem(
-            value: r['value'],
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              child: Row(
-                children: [
-                  Icon(_roleIcon(r['value']!),
-                      size: 18, color: const Color(0xFF2563EB)),
-                  const SizedBox(width: 12),
-                  Text(
-                    r['label']!,
-                    style: const TextStyle(
-                      color: Color(0xFF0F172A),
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+
+        const SizedBox(height: 6),
+        Container(
+          width: double.infinity,
+          height: 44, // Same height as text fields
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF8FAFF),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: const Color(0xFFE2E8F0)),
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<String>(
+              value: _role,
+              isExpanded: true,
+              isDense: true,
+              dropdownColor: Colors.white,
+              icon: const Icon(Icons.keyboard_arrow_down_rounded,
+                  size: 20, color: Color(0xFF94A3B8)),
+              style: const TextStyle(
+                  color: Color(0xFF0F172A), fontSize: 14),
+              items: _roles.map((r) => DropdownMenuItem(
+                value: r['value'],
+                child: Row(
+                  children: [
+                    Icon(_roleIcon(r['value']!),
+                        size: 16, color: const Color(0xFF2563EB)),
+                    const SizedBox(width: 10),
+                    Text(
+                      r['label']!,
+                      style: const TextStyle(
+                        color: Color(0xFF0F172A),
+                        fontSize: 14,
+                      ),
                     ),
-                  ),
-                ],
-              ),
+                  ],
+                ),
+              )).toList(),
+              onChanged: (v) {
+                if (v != null) setState(() => _role = v);
+              },
             ),
-          )).toList(),
-          onChanged: (v) {
-            if (v != null) setState(() => _role = v);
-          },
+          ),
         ),
-      ),
+      ],
     );
   }
 
