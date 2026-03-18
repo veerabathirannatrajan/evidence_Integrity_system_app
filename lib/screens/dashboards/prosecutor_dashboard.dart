@@ -7,9 +7,9 @@ import '../../providers/theme_provider.dart';
 import '../../services/api_service.dart';
 import '../dashboard_widgets.dart';
 import '../login_screen.dart';
-import '../evidence_list_screen.dart';
+import '../evidence_list_screen.dart' show EvidenceListScreen;
 import '../verify_evidence_screen.dart';
-import '../custody_timeline_screen.dart';
+import '../custody_timeline_screen.dart' show CustodyTimelineScreen;
 import '../blockchain_viewer_screen.dart';
 
 class ProsecutorDashboard extends StatefulWidget {

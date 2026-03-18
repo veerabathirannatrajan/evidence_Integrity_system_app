@@ -5,7 +5,9 @@ import 'package:http_parser/http_parser.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 class ApiService {
+  //static const String baseUrl = 'https://evidence-integrity-system-backend.onrender.com';
   static const String baseUrl = 'http://localhost:5000';
+
 
   Future<String> _getToken() async {
     final token = await FirebaseAuth.instance.currentUser?.getIdToken();
@@ -383,6 +385,51 @@ class ApiService {
       Uri.parse('$baseUrl/api/custody/history/$evidenceId'),
       headers: _headers(token),
     );
-    return jsonDecode(res.body);
+    if (res.statusCode == 200) return jsonDecode(res.body);
+    throw Exception('Failed to get custody history');
+  }
+
+  Future<Map<String, dynamic>> transferCustody(
+      String evidenceId, String toUser, String reason, {
+        required String toRole,
+        String notes = '',
+      }) async {
+    final token = await _getToken();
+    final res = await http.post(
+      Uri.parse('$baseUrl/api/custody/transfer'),
+      headers: _headers(token),
+      body: jsonEncode({
+        'evidenceId': evidenceId,
+        'toUser':     toUser,
+        'toRole':     toRole,
+        'reason':     reason,
+        'notes':      notes,
+      }),
+    );
+    final data = jsonDecode(res.body);
+    if (res.statusCode == 201) return data;
+    throw Exception(data['message'] ?? 'Transfer failed');
+  }
+
+  Future<Map<String, dynamic>> getAllowedRoles() async {
+    try {
+      final token = await _getToken();
+      final res = await http.get(
+        Uri.parse('$baseUrl/api/custody/allowed-roles'),
+        headers: _headers(token),
+      );
+      if (res.statusCode == 200) return jsonDecode(res.body);
+      return {'allowedRoles': []};
+    } catch (_) { return {'allowedRoles': []}; }
+  }
+
+  Future<Map<String, dynamic>> getCustodyByCase(String caseId) async {
+    final token = await _getToken();
+    final res = await http.get(
+      Uri.parse('$baseUrl/api/custody/case/$caseId'),
+      headers: _headers(token),
+    );
+    if (res.statusCode == 200) return jsonDecode(res.body);
+    throw Exception('Failed to get custody by case');
   }
 }

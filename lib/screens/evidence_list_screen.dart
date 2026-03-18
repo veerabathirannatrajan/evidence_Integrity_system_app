@@ -6,7 +6,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 // ignore: avoid_web_libraries_in_flutter
-import 'dart:ui_web' as ui_web;
+// import 'dart:ui_web' as ui_web;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
