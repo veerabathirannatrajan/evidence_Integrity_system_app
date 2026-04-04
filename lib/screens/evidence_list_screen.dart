@@ -1,12 +1,9 @@
 // evidence_list_screen.dart
-// Image preview approach:
-//   Web:    HtmlElementView with <img> tag (bypasses CORS completely)
-//   Native: Image.network() with Firebase Storage SDK URL
-// ignore: avoid_web_libraries_in_flutter
+// FIXED: dart:ui_web REMOVED — compiles on Android/iOS/Web/Desktop
+// VIDEO: VideoPlayerController.networkUrl — works on all platforms
+// IMAGE: Firebase REST token URL via http.get — no CORS, no platform issues
+// UI: Premium light SaaS design, fully responsive, shimmer loading
 import 'dart:convert';
-import 'dart:typed_data';
-// ignore: avoid_web_libraries_in_flutter
-import 'dart:ui_web' as ui_web;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -20,50 +17,85 @@ import '../services/api_service.dart';
 import 'verify_evidence_screen.dart';
 import 'blockchain_viewer_screen.dart';
 
+// ─── Palette ─────────────────────────────────────────────────────────────────
+class _P {
+  static const bg         = Color(0xFFF4F7FF);
+  static const card       = Colors.white;
+  static const border     = Color(0xFFE8ECF4);
+  static const ink        = Color(0xFF0A0E1A);
+  static const slate      = Color(0xFF475569);
+  static const muted      = Color(0xFF94A3B8);
+  static const inputBg    = Color(0xFFF8FAFF);
+  static const accent     = Color(0xFF3B5BDB);
+  static const accentSoft = Color(0xFFEEF2FF);
+  static const green      = Color(0xFF0D9488);
+  static const greenSoft  = Color(0xFFECFDF5);
+  static const red        = Color(0xFFDC2626);
+  static const redSoft    = Color(0xFFFEF2F2);
+  static const orange     = Color(0xFFD97706);
+  static const purple     = Color(0xFF7C3AED);
+  static const mobileBreak = 700.0;
+}
+
+// EVC kept for backward-compat with sub-widgets
+class EVC {
+  final bool isDark;
+  EVC(this.isDark);
+  Color get bg         => _P.bg;
+  Color get card       => _P.card;
+  Color get inputBg    => _P.inputBg;
+  Color get border     => _P.border;
+  Color get txtPrimary => _P.ink;
+  Color get txtSecond  => _P.slate;
+  Color get txtMuted   => _P.muted;
+  Color get accent     => _P.accent;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 class EvidenceListScreen extends StatefulWidget {
   final String? filterByCaseId;
   const EvidenceListScreen({super.key, required this.filterByCaseId});
-
-  @override
-  State<EvidenceListScreen> createState() => _EvidenceListScreenState();
+  @override State<EvidenceListScreen> createState() =>
+      _EvidenceListScreenState();
 }
 
 class _EvidenceListScreenState extends State<EvidenceListScreen>
     with TickerProviderStateMixin {
 
-  final _api = ApiService();
+  final _api        = ApiService();
   final _searchCtrl = TextEditingController();
 
-  List<dynamic>                  _cases       = [];
-  Map<String, List<dynamic>>     _evidenceMap = {};
-  Set<String>                    _expanded    = {};
-  bool                           _loading     = true;
-  String?                        _error;
-  String                         _search      = '';
-  String                         _filter      = 'all';
-  Map<String, dynamic>?          _selected;
+  List<dynamic>              _cases       = [];
+  Map<String, List<dynamic>> _evidenceMap = {};
+  Set<String>                _expanded    = {};
+  bool                       _loading     = true;
+  String?                    _error;
+  String                     _search      = '';
+  String                     _filter      = 'all';
+  Map<String, dynamic>?      _selected;
+  bool                       _sidebarOpen = true;
 
-  // Cache for Firebase Storage download URLs
-  final Map<String, String>      _urlCache    = {};
-  // Cache for image bytes
-  // URL cache for images (getDownloadURL results)
-  final Map<String, String>      _imgCache    = {};
+  final Map<String, String>  _urlCache = {};
+  final Map<String, String>  _imgCache = {};
 
   late AnimationController _entryCtrl;
   late Animation<double>   _entryOpacity;
   late Animation<Offset>   _entrySlide;
+  late AnimationController _staggerCtrl;
 
   @override
   void initState() {
     super.initState();
     _entryCtrl = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 500));
+        vsync: this, duration: const Duration(milliseconds: 550));
     _entryOpacity = _entryCtrl.drive(
         Tween(begin: 0.0, end: 1.0)
-            .chain(CurveTween(curve: const Interval(0, 0.6))));
+            .chain(CurveTween(curve: const Interval(0, 0.65))));
     _entrySlide = _entryCtrl.drive(
-        Tween(begin: const Offset(0, 0.025), end: Offset.zero)
+        Tween(begin: const Offset(0, 0.03), end: Offset.zero)
             .chain(CurveTween(curve: Curves.easeOutCubic)));
+    _staggerCtrl = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 900));
     _entryCtrl.forward();
     _loadData();
   }
@@ -71,24 +103,25 @@ class _EvidenceListScreenState extends State<EvidenceListScreen>
   @override
   void dispose() {
     _entryCtrl.dispose();
+    _staggerCtrl.dispose();
     _searchCtrl.dispose();
     super.dispose();
   }
 
+  // ── Business logic unchanged ──────────────────────────────────────────────
   Future<void> _loadData() async {
     setState(() { _loading = true; _error = null; });
     try {
       if (widget.filterByCaseId != null) {
         final caseData = await _api.getCaseById(widget.filterByCaseId!);
-        final ev = await _api.getEvidenceByCase(widget.filterByCaseId!);
+        final ev       = await _api.getEvidenceByCase(widget.filterByCaseId!);
         if (mounted) setState(() {
           _cases       = [caseData];
           _evidenceMap = {widget.filterByCaseId!: List.from(ev)};
           _expanded    = {widget.filterByCaseId!};
           _loading     = false;
-          if (ev.isNotEmpty) {
+          if (ev.isNotEmpty)
             _selectEvidence(Map<String, dynamic>.from(ev.first));
-          }
         });
       } else {
         final cases = await _api.getCasesWithEvidence();
@@ -96,16 +129,16 @@ class _EvidenceListScreenState extends State<EvidenceListScreen>
           _cases   = cases;
           _loading = false;
           if (cases.isNotEmpty) {
-            final firstId = cases.first['_id'].toString();
-            _expanded = {firstId};
-            _loadCaseEvidence(firstId);
+            final id = cases.first['_id'].toString();
+            _expanded = {id};
+            _loadCaseEvidence(id);
           }
         });
       }
+      _staggerCtrl.forward(from: 0);
     } catch (e) {
       if (mounted) setState(() {
-        _error   = 'Failed to load: $e';
-        _loading = false;
+        _error = 'Failed to load: $e'; _loading = false;
       });
     }
   }
@@ -114,20 +147,14 @@ class _EvidenceListScreenState extends State<EvidenceListScreen>
     if (_evidenceMap.containsKey(caseId)) return;
     try {
       final ev = await _api.getEvidenceByCase(caseId);
-      if (mounted) setState(() {
-        _evidenceMap[caseId] = List.from(ev);
-      });
+      if (mounted) setState(() => _evidenceMap[caseId] = List.from(ev));
     } catch (_) {}
   }
 
   void _toggle(String caseId) {
     setState(() {
-      if (_expanded.contains(caseId)) {
-        _expanded.remove(caseId);
-      } else {
-        _expanded.add(caseId);
-        _loadCaseEvidence(caseId);
-      }
+      if (_expanded.contains(caseId)) _expanded.remove(caseId);
+      else { _expanded.add(caseId); _loadCaseEvidence(caseId); }
     });
   }
 
@@ -138,959 +165,768 @@ class _EvidenceListScreenState extends State<EvidenceListScreen>
       if (_filter == 'anchored' && s != 'anchored') return false;
       if (_filter == 'tampered' && !t)              return false;
       if (_filter == 'pending'  && s != 'pending')  return false;
-      if (_search.isNotEmpty) {
-        final q = _search.toLowerCase();
-        if (!(e['fileName'] ?? '').toLowerCase().contains(q)) return false;
-      }
+      if (_search.isNotEmpty &&
+          !(e['fileName'] ?? '').toLowerCase()
+              .contains(_search.toLowerCase())) return false;
       return true;
     }).toList();
   }
 
-  void _selectEvidence(Map<String, dynamic> ev) {
-    setState(() => _selected = ev);
-  }
+  void _selectEvidence(Map<String, dynamic> ev) =>
+      setState(() => _selected = ev);
 
-  void _snack(String msg, Color color) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(msg), backgroundColor: color,
-        duration: const Duration(seconds: 1),
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(8))));
-  }
+  void _snack(String msg, Color c) =>
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(msg), backgroundColor: c,
+          duration: const Duration(seconds: 1),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10))));
 
   void _copy(String text, String label) {
     Clipboard.setData(ClipboardData(text: text));
-    _snack('$label copied', const Color(0xFF059669));
+    _snack('$label copied', _P.green);
   }
 
-  // ════════════════════════════════════════════════════════
+  // ─────────────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
-    final isDark = context.watch<ThemeProvider>().isDark;
-    final C      = EVC(isDark);
-
+    final C = EVC(false);
     return Scaffold(
-      backgroundColor: C.bg,
+      backgroundColor: _P.bg,
       body: FadeTransition(
         opacity: _entryOpacity,
         child: SlideTransition(
           position: _entrySlide,
-          child: Row(children: [
-
-            // ── LEFT: Case + Evidence list ──────────────
-            Container(
-              width: 360,
-              decoration: BoxDecoration(
-                  color: C.card,
-                  border: Border(
-                      right: BorderSide(color: C.border))),
-              child: Column(children: [
-                _leftHeader(C),
-                _searchAndFilter(C),
-                Expanded(child: _caseListView(C)),
-              ]),
-            ),
-
-            // ── RIGHT: Preview + Metadata ───────────────
-            Expanded(
-              child: _selected == null
-                  ? _emptyDetailState(C)
-                  : _rightPanel(C, _selected!),
-            ),
-          ]),
+          child: LayoutBuilder(builder: (ctx, cs) {
+            if (cs.maxWidth < _P.mobileBreak)
+              return _mobileLayout(C, cs);
+            return _desktopLayout(C);
+          }),
         ),
       ),
     );
   }
 
-  // ════════════════════════════════════════════════════════
-  // LEFT PANEL
-  // ════════════════════════════════════════════════════════
+  // ── DESKTOP ───────────────────────────────────────────────────────────────
+  Widget _desktopLayout(EVC C) {
+    return Row(children: [
+      // Sidebar
+      AnimatedContainer(
+        duration: const Duration(milliseconds: 260),
+        curve: Curves.easeInOut,
+        width: _sidebarOpen ? 340 : 0,
+        child: _sidebarOpen ? _buildSidebar(C) : const SizedBox.shrink(),
+      ),
+      // Collapse handle
+      GestureDetector(
+        onTap: () => setState(() => _sidebarOpen = !_sidebarOpen),
+        child: Container(
+          width: 14, color: _P.bg,
+          child: Center(child: Container(
+              width: 4, height: 36,
+              decoration: BoxDecoration(
+                  color: _P.border,
+                  borderRadius: BorderRadius.circular(2)))),
+        ),
+      ),
+      // Main
+      Expanded(child: _selected == null
+          ? _emptyState() : _buildDetail(C)),
+    ]);
+  }
 
-  Widget _leftHeader(EVC C) {
-    return Container(
-      height: 60,
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      decoration: BoxDecoration(
-          border: Border(bottom: BorderSide(color: C.border))),
-      child: Row(children: [
-        GestureDetector(
-            onTap: () => Navigator.pop(context),
-            child: Container(
-                width: 32, height: 32,
-                decoration: BoxDecoration(
-                    color: C.bg,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: C.border)),
-                child: Icon(Icons.arrow_back_rounded,
-                    size: 16, color: C.txtSecond))),
-        const SizedBox(width: 12),
-        Container(
-            width: 32, height: 32,
-            decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                    colors: [Color(0xFF2563EB), Color(0xFF1D4ED8)]),
-                borderRadius: BorderRadius.circular(9)),
-            child: const Icon(Icons.folder_outlined,
-                color: Colors.white, size: 16)),
-        const SizedBox(width: 10),
-        Expanded(child: Text(
-            widget.filterByCaseId != null
-                ? 'Case Evidence' : 'Evidence by Case',
-            style: TextStyle(color: C.txtPrimary,
-                fontSize: 14, fontWeight: FontWeight.w800))),
-        GestureDetector(
-            onTap: () { _urlCache.clear(); _imgCache.clear();
-            _evidenceMap.clear(); _loadData(); },
-            child: Container(
-                width: 30, height: 30,
-                decoration: BoxDecoration(
-                    color: C.bg,
-                    borderRadius: BorderRadius.circular(7),
-                    border: Border.all(color: C.border)),
-                child: Icon(Icons.refresh_rounded,
-                    size: 15, color: C.txtSecond))),
-      ]),
+  // ── MOBILE ────────────────────────────────────────────────────────────────
+  Widget _mobileLayout(EVC C, BoxConstraints cs) {
+    return Scaffold(
+      backgroundColor: _P.bg,
+      drawer: Drawer(
+        width: cs.maxWidth * 0.88,
+        child: _buildSidebar(C),
+      ),
+      appBar: AppBar(
+        backgroundColor: _P.card,
+        elevation: 0, scrolledUnderElevation: 0,
+        surfaceTintColor: Colors.transparent,
+        leading: Builder(builder: (ctx) => IconButton(
+          icon: const Icon(Icons.menu_rounded, color: _P.ink, size: 20),
+          onPressed: () => Scaffold.of(ctx).openDrawer(),
+        )),
+        title: Text(
+          _selected != null
+              ? (_selected!['fileName'] as String? ?? 'Evidence')
+              : 'Evidence Files',
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(color: _P.ink,
+              fontSize: 14, fontWeight: FontWeight.w800),
+        ),
+        bottom: PreferredSize(
+            preferredSize: const Size.fromHeight(1),
+            child: Divider(color: _P.border, height: 1)),
+      ),
+      body: _selected == null ? _emptyState() : _buildDetail(C),
     );
   }
 
-  Widget _searchAndFilter(EVC C) {
+  // ── SIDEBAR ───────────────────────────────────────────────────────────────
+  Widget _buildSidebar(EVC C) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
       decoration: BoxDecoration(
-          border: Border(bottom: BorderSide(color: C.border))),
+        color: _P.card,
+        border: const Border(right: BorderSide(color: _P.border)),
+        boxShadow: [BoxShadow(
+            color: _P.accent.withOpacity(0.04),
+            blurRadius: 20, offset: const Offset(4, 0))],
+      ),
       child: Column(children: [
+        // Header
         Container(
-          decoration: BoxDecoration(
-              color: C.bg,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: C.border)),
-          child: TextField(
-            controller: _searchCtrl,
-            onChanged: (v) => setState(() => _search = v),
-            style: TextStyle(color: C.txtPrimary, fontSize: 13),
-            decoration: InputDecoration(
-                hintText: 'Search files...',
-                hintStyle: TextStyle(color: C.txtMuted, fontSize: 13),
-                prefixIcon: Icon(Icons.search_rounded,
-                    size: 16, color: C.txtMuted),
-                suffixIcon: _search.isNotEmpty
-                    ? IconButton(
-                    icon: Icon(Icons.close_rounded,
-                        size: 14, color: C.txtMuted),
-                    onPressed: () {
-                      _searchCtrl.clear();
-                      setState(() => _search = '');
-                    })
-                    : null,
-                border: InputBorder.none,
-                isDense: true,
-                contentPadding: const EdgeInsets.symmetric(
-                    vertical: 11, horizontal: 14)),
-          ),
-        ),
-        const SizedBox(height: 8),
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
+          height: 62,
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          decoration: const BoxDecoration(
+              border: Border(bottom: BorderSide(color: _P.border))),
           child: Row(children: [
-            for (final f in ['all','anchored','tampered','pending'])
-              Padding(padding: const EdgeInsets.only(right: 6),
-                  child: _filterChip(C, f)),
+            _IconBtn(Icons.arrow_back_rounded,
+                    () => Navigator.pop(context), 'Back'),
+            const SizedBox(width: 10),
+            Container(
+                width: 34, height: 34,
+                decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                        colors: [Color(0xFF3B5BDB), Color(0xFF2248C9)]),
+                    borderRadius: BorderRadius.circular(10),
+                    boxShadow: [BoxShadow(
+                        color: _P.accent.withOpacity(0.3),
+                        blurRadius: 10, offset: const Offset(0, 4))]),
+                child: const Icon(Icons.folder_outlined,
+                    color: Colors.white, size: 16)),
+            const SizedBox(width: 10),
+            Expanded(child: Text(
+              widget.filterByCaseId != null
+                  ? 'Case Evidence' : 'Evidence by Case',
+              style: const TextStyle(color: _P.ink,
+                  fontSize: 14, fontWeight: FontWeight.w800),
+            )),
+            _IconBtn(Icons.refresh_rounded, () {
+              _urlCache.clear(); _imgCache.clear();
+              _evidenceMap.clear(); _loadData();
+            }, 'Refresh'),
           ]),
         ),
+        // Search
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+          child: Container(
+            decoration: BoxDecoration(
+                color: _P.inputBg,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: _P.border),
+                boxShadow: [BoxShadow(
+                    color: Colors.black.withOpacity(0.025),
+                    blurRadius: 6, offset: const Offset(0, 2))]),
+            child: TextField(
+              controller: _searchCtrl,
+              onChanged: (v) => setState(() => _search = v),
+              style: const TextStyle(color: _P.ink, fontSize: 13),
+              decoration: InputDecoration(
+                  hintText: 'Search files…',
+                  hintStyle: const TextStyle(color: _P.muted, fontSize: 13),
+                  prefixIcon: const Icon(Icons.search_rounded,
+                      size: 16, color: _P.muted),
+                  suffixIcon: _search.isNotEmpty
+                      ? IconButton(
+                      icon: const Icon(Icons.close_rounded,
+                          size: 14, color: _P.muted),
+                      onPressed: () {
+                        _searchCtrl.clear();
+                        setState(() => _search = '');
+                      }) : null,
+                  border: InputBorder.none, isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(
+                      vertical: 12, horizontal: 14)),
+            ),
+          ),
+        ),
+        // Filters
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(children: [
+              for (final f in ['all','anchored','tampered','pending'])
+                Padding(
+                  padding: const EdgeInsets.only(right: 6),
+                  child: _FilterChip(
+                    label: f[0].toUpperCase() + f.substring(1),
+                    active: _filter == f,
+                    color: _filterColor(f),
+                    onTap: () => setState(() => _filter = f),
+                  ),
+                ),
+            ]),
+          ),
+        ),
+        // List
+        Expanded(child: _loading
+            ? const _ShimmerList()
+            : _error != null
+            ? _ErrorState(m: _error!, onRetry: _loadData)
+            : _cases.isEmpty
+            ? const _EmptyCases()
+            : ListView.builder(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          itemCount: _cases.length,
+          itemBuilder: (_, i) {
+            final delay = (i * 0.08).clamp(0.0, 0.8);
+            return AnimatedBuilder(
+              animation: _staggerCtrl,
+              builder: (_, child) {
+                final t = Curves.easeOutCubic.transform(
+                    ((_staggerCtrl.value - delay) / (1 - delay))
+                        .clamp(0.0, 1.0));
+                return Opacity(opacity: t,
+                    child: Transform.translate(
+                        offset: Offset(0, 14 * (1 - t)),
+                        child: child));
+              },
+              child: _CaseBlock(
+                caseData: _cases[i],
+                evidenceMap: _evidenceMap,
+                expanded: _expanded,
+                filter: _filter, search: _search,
+                selected: _selected,
+                urlCache: _urlCache, C: C,
+                onToggle: _toggle,
+                onSelect: (ev) {
+                  _selectEvidence(ev);
+                  // close drawer on mobile
+                  if (MediaQuery.of(context).size.width < _P.mobileBreak) {
+                    Navigator.of(context).pop();
+                  }
+                },
+              ),
+            );
+          },
+        )),
       ]),
     );
   }
 
-  Widget _filterChip(EVC C, String f) {
-    final active = _filter == f;
-    final color  = _filterColor(f);
-    return GestureDetector(
-        onTap: () => setState(() => _filter = f),
-        child: AnimatedContainer(
-            duration: const Duration(milliseconds: 140),
-            padding: const EdgeInsets.symmetric(
-                horizontal: 12, vertical: 5),
-            decoration: BoxDecoration(
-                color: active ? color : Colors.transparent,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                    color: active ? color : C.border)),
-            child: Text(
-                f[0].toUpperCase() + f.substring(1),
-                style: TextStyle(
-                    color: active ? Colors.white : C.txtSecond,
-                    fontSize: 11,
-                    fontWeight: active
-                        ? FontWeight.w700 : FontWeight.w400))));
+  // ── DETAIL ────────────────────────────────────────────────────────────────
+  Widget _buildDetail(EVC C) {
+    final ev       = _selected!;
+    final id       = ev['_id']?.toString() ?? '';
+    final name     = ev['fileName'] as String? ?? '';
+    final mime     = ev['fileType'] as String? ?? '';
+    final path     = ev['storagePath'] as String? ?? '';
+    final status   = ev['blockchainStatus'] as String? ?? 'pending';
+    final tampered = ev['isTampered'] == true;
+    final fileHash = ev['fileHash'] as String? ?? '';
+    final txHash   = ev['blockchainTxHash'] as String?;
+    final caseId   = ev['caseId']?.toString() ?? '';
+    final desc     = ev['description'] as String? ?? '';
+
+    return Column(children: [
+      // Top bar
+      Container(
+        height: 62,
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        decoration: BoxDecoration(
+            color: _P.card,
+            border: const Border(bottom: BorderSide(color: _P.border)),
+            boxShadow: [BoxShadow(
+                color: Colors.black.withOpacity(0.03),
+                blurRadius: 8, offset: const Offset(0, 2))]),
+        child: Row(children: [
+          _MimeTag(mime),
+          const SizedBox(width: 12),
+          Expanded(child: Text(name, overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: _P.ink,
+                  fontSize: 14, fontWeight: FontWeight.w800))),
+          _ActionBtn(Icons.verified_outlined, _P.green, 'Verify', () =>
+              Navigator.push(context,
+                  MaterialPageRoute(builder: (_) =>
+                      VerifyEvidenceScreen(evidenceId: id)))
+                  .then((_) {
+                _evidenceMap.clear();
+                _urlCache.remove(id);
+                _loadData();
+              })),
+          if (status == 'anchored' && txHash != null) ...[
+            const SizedBox(width: 6),
+            _ActionBtn(Icons.link_rounded, _P.purple, 'Blockchain', () =>
+                Navigator.push(context,
+                    MaterialPageRoute(builder: (_) =>
+                        BlockchainViewerScreen(
+                            evidenceId: id, txHash: txHash)))),
+          ],
+          const SizedBox(width: 6),
+          _IconBtn(Icons.close_rounded,
+                  () => setState(() => _selected = null), 'Close'),
+        ]),
+      ),
+      // Body
+      Expanded(child: LayoutBuilder(builder: (ctx, cs) {
+        final narrow = cs.maxWidth < 640;
+        if (narrow) {
+          return SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (tampered) ...[
+                    _TamperBanner(evidenceId: id),
+                    const SizedBox(height: 14),
+                  ],
+                  _PreviewWidget(
+                      storagePath: path,
+                      downloadURL: ev['downloadURL'] as String? ?? '',
+                      mime: mime, fileName: name, evidenceId: id,
+                      bucket: 'evidence-system-6f225.firebasestorage.app',
+                      imgCache: _imgCache, onImgLoaded: (_) {}, C: C),
+                  const SizedBox(height: 16),
+                  Divider(color: _P.border),
+                  const SizedBox(height: 12),
+                  _MetaSidebar(
+                      ev: ev, id: id, name: name, mime: mime,
+                      status: status, tampered: tampered,
+                      fileHash: fileHash, txHash: txHash,
+                      caseId: caseId, desc: desc, onCopy: _copy),
+                ]),
+          );
+        }
+        return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Expanded(flex: 3, child: SingleChildScrollView(
+            padding: const EdgeInsets.all(22),
+            child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (tampered) ...[
+                    _TamperBanner(evidenceId: id),
+                    const SizedBox(height: 16),
+                  ],
+                  _PreviewWidget(
+                      storagePath: path,
+                      downloadURL: ev['downloadURL'] as String? ?? '',
+                      mime: mime, fileName: name, evidenceId: id,
+                      bucket: 'evidence-system-6f225.firebasestorage.app',
+                      imgCache: _imgCache, onImgLoaded: (_) {}, C: C),
+                ]),
+          )),
+          VerticalDivider(color: _P.border, width: 1),
+          SizedBox(width: 272, child: _MetaSidebar(
+              ev: ev, id: id, name: name, mime: mime,
+              status: status, tampered: tampered,
+              fileHash: fileHash, txHash: txHash,
+              caseId: caseId, desc: desc, onCopy: _copy)),
+        ]);
+      })),
+    ]);
   }
 
-  Widget _caseListView(EVC C) {
-    if (_loading) {
-      return Center(child: Column(
-          mainAxisSize: MainAxisSize.min, children: [
-        SizedBox(width: 22, height: 22,
-            child: CircularProgressIndicator(
-                color: C.accent, strokeWidth: 2.5)),
-        const SizedBox(height: 12),
-        Text('Loading cases...',
-            style: TextStyle(color: C.txtSecond, fontSize: 12)),
-      ]));
-    }
-    if (_error != null) {
-      return Center(child: Column(
-          mainAxisSize: MainAxisSize.min, children: [
-        Icon(Icons.error_outline_rounded,
-            size: 30, color: C.txtMuted),
-        const SizedBox(height: 8),
-        Text(_error!,
-            style: TextStyle(color: C.txtSecond, fontSize: 12)),
-        const SizedBox(height: 10),
-        TextButton(onPressed: _loadData,
-            child: Text('Retry',
-                style: TextStyle(color: C.accent))),
-      ]));
-    }
-    if (_cases.isEmpty) {
-      return Center(child: Column(
-          mainAxisSize: MainAxisSize.min, children: [
-        Icon(Icons.folder_off_outlined,
-            size: 36, color: C.txtMuted),
-        const SizedBox(height: 10),
-        Text('No cases found',
-            style: TextStyle(color: C.txtPrimary,
-                fontSize: 14, fontWeight: FontWeight.w600)),
-        const SizedBox(height: 3),
-        Text('Create a case first',
-            style: TextStyle(color: C.txtMuted, fontSize: 12)),
-      ]));
-    }
+  Widget _emptyState() => Container(
+    decoration: const BoxDecoration(
+      gradient: LinearGradient(
+        begin: Alignment.topLeft, end: Alignment.bottomRight,
+        colors: [Color(0xFFF4F7FF), Color(0xFFEEF2FF)],
+      ),
+    ),
+    child: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+      TweenAnimationBuilder<double>(
+        tween: Tween(begin: 0.85, end: 1.0),
+        duration: const Duration(seconds: 2),
+        curve: Curves.easeInOut,
+        builder: (_, v, child) =>
+            Transform.scale(scale: v, child: child),
+        child: Container(
+          width: 88, height: 88,
+          decoration: BoxDecoration(
+              gradient: LinearGradient(colors: [
+                _P.accent.withOpacity(0.15), _P.accent.withOpacity(0.04)]),
+              shape: BoxShape.circle,
+              boxShadow: [BoxShadow(
+                  color: _P.accent.withOpacity(0.14),
+                  blurRadius: 28, offset: const Offset(0, 8))]),
+          child: const Icon(Icons.touch_app_outlined,
+              size: 38, color: _P.accent),
+        ),
+      ),
+      const SizedBox(height: 20),
+      const Text('Select an evidence file',
+          style: TextStyle(color: _P.ink,
+              fontSize: 18, fontWeight: FontWeight.w800)),
+      const SizedBox(height: 6),
+      const Text('Tap any file from the list to preview it',
+          style: TextStyle(color: _P.muted, fontSize: 13)),
+    ])),
+  );
 
-    return ListView.builder(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      itemCount: _cases.length,
-      itemBuilder: (_, i) => _caseBlock(C, _cases[i]),
-    );
-  }
+  Color _filterColor(String f) => switch (f) {
+    'anchored' => _P.green,
+    'tampered' => _P.red,
+    'pending'  => _P.orange,
+    _          => _P.accent,
+  };
+}
 
-  Widget _caseBlock(EVC C, Map c) {
-    final caseId   = c['_id'].toString();
-    final expanded = _expanded.contains(caseId);
-    final stats    = c['evidenceStats'] as Map? ?? {};
+// ─────────────────────────────────────────────────────────────────────────────
+//  CASE BLOCK
+// ─────────────────────────────────────────────────────────────────────────────
+class _CaseBlock extends StatefulWidget {
+  final Map              caseData;
+  final Map<String, List<dynamic>> evidenceMap;
+  final Set<String>      expanded;
+  final String           filter, search;
+  final Map<String,dynamic>? selected;
+  final Map<String,String>   urlCache;
+  final EVC              C;
+  final ValueChanged<String>              onToggle;
+  final ValueChanged<Map<String,dynamic>> onSelect;
+
+  const _CaseBlock({
+    required this.caseData, required this.evidenceMap,
+    required this.expanded, required this.filter, required this.search,
+    required this.selected, required this.urlCache, required this.C,
+    required this.onToggle, required this.onSelect,
+  });
+  @override State<_CaseBlock> createState() => _CaseBlockState();
+}
+
+class _CaseBlockState extends State<_CaseBlock> {
+  bool _hovered = false;
+  @override
+  Widget build(BuildContext context) {
+    final caseId   = widget.caseData['_id'].toString();
+    final isOpen   = widget.expanded.contains(caseId);
+    final stats    = widget.caseData['evidenceStats'] as Map? ?? {};
     final total    = stats['total']    as int? ?? 0;
     final tampered = stats['tampered'] as int? ?? 0;
     final anchored = stats['anchored'] as int? ?? 0;
     final hasBad   = tampered > 0;
-    final title    = c['title']   as String? ?? 'Untitled';
-    final ref      = c['caseRef'] as String? ?? '';
-    final status   = c['status']  as String? ?? 'open';
+    final title    = widget.caseData['title']   as String? ?? 'Untitled';
+    final ref      = widget.caseData['caseRef'] as String? ?? '';
+    final status   = widget.caseData['status']  as String? ?? 'open';
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Case header
-        GestureDetector(
-          onTap: () => _toggle(caseId),
-          child: Container(
-            margin: const EdgeInsets.fromLTRB(10, 4, 10, 0),
-            padding: const EdgeInsets.symmetric(
-                horizontal: 12, vertical: 11),
-            decoration: BoxDecoration(
-                color: hasBad
-                    ? const Color(0xFFDC2626).withOpacity(0.05)
-                    : expanded
-                    ? C.accent.withOpacity(0.05)
-                    : Colors.transparent,
-                borderRadius: BorderRadius.circular(11),
-                border: Border.all(
-                    color: hasBad
-                        ? const Color(0xFFDC2626).withOpacity(0.3)
-                        : expanded
-                        ? C.accent.withOpacity(0.3)
-                        : Colors.transparent)),
-            child: Row(children: [
-              Container(
-                  width: 38, height: 38,
-                  decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: hasBad
-                              ? [const Color(0xFFDC2626).withOpacity(0.2),
-                            const Color(0xFFDC2626).withOpacity(0.1)]
-                              : [C.accent.withOpacity(0.2),
-                            C.accent.withOpacity(0.08)]),
-                      borderRadius: BorderRadius.circular(10)),
-                  child: Icon(
-                      hasBad
-                          ? Icons.warning_amber_rounded
-                          : Icons.folder_outlined,
-                      size: 19,
-                      color: hasBad
-                          ? const Color(0xFFDC2626) : C.accent)),
-              const SizedBox(width: 10),
-              Expanded(child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title, overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: C.txtPrimary,
-                          fontSize: 13, fontWeight: FontWeight.w700)),
-                  const SizedBox(height: 2),
-                  Row(children: [
-                    _statusDot(C, status),
-                    if (ref.isNotEmpty) ...[
-                      const SizedBox(width: 6),
-                      Text(ref, style: TextStyle(
-                          color: C.accent, fontSize: 9,
-                          fontFamily: 'monospace')),
-                    ],
-                  ]),
-                ],
-              )),
-              const SizedBox(width: 6),
-              Column(crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text('$total files',
-                        style: TextStyle(color: C.txtMuted,
-                            fontSize: 9)),
-                    const SizedBox(height: 2),
-                    Row(mainAxisSize: MainAxisSize.min, children: [
-                      if (anchored > 0)
-                        _miniTag('$anchored ✓',
-                            const Color(0xFF059669)),
-                      if (hasBad) ...[
-                        const SizedBox(width: 4),
-                        _miniTag('$tampered ⚠',
-                            const Color(0xFFDC2626)),
-                      ],
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(10, 2, 10, 2),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        MouseRegion(
+          cursor: SystemMouseCursors.click,
+          onEnter: (_) => setState(() => _hovered = true),
+          onExit:  (_) => setState(() => _hovered = false),
+          child: GestureDetector(
+            onTap: () => widget.onToggle(caseId),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 160),
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                  color: hasBad ? _P.red.withOpacity(0.04)
+                      : isOpen || _hovered
+                      ? _P.accent.withOpacity(0.04)
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                      color: hasBad ? _P.red.withOpacity(0.2)
+                          : isOpen ? _P.accent.withOpacity(0.2)
+                          : Colors.transparent),
+                  boxShadow: _hovered ? [BoxShadow(
+                      color: _P.accent.withOpacity(0.06),
+                      blurRadius: 10, offset: const Offset(0, 2))] : []),
+              child: Row(children: [
+                Container(
+                    width: 36, height: 36,
+                    decoration: BoxDecoration(
+                        color: hasBad
+                            ? _P.red.withOpacity(0.1)
+                            : _P.accent.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(9)),
+                    child: Icon(
+                        hasBad ? Icons.warning_amber_rounded
+                            : Icons.folder_outlined,
+                        size: 18,
+                        color: hasBad ? _P.red : _P.accent)),
+                const SizedBox(width: 10),
+                Expanded(child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(title, overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: _P.ink,
+                              fontSize: 13, fontWeight: FontWeight.w700)),
+                      const SizedBox(height: 2),
+                      Row(children: [
+                        _StatusDot(status),
+                        if (ref.isNotEmpty) ...[
+                          const SizedBox(width: 6),
+                          Text(ref, style: const TextStyle(
+                              color: _P.accent, fontSize: 9,
+                              fontFamily: 'monospace')),
+                        ],
+                      ]),
+                    ])),
+                const SizedBox(width: 6),
+                Column(crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text('$total files',
+                          style: const TextStyle(
+                              color: _P.muted, fontSize: 9)),
+                      const SizedBox(height: 3),
+                      Row(mainAxisSize: MainAxisSize.min, children: [
+                        if (anchored > 0)
+                          _MiniTag('$anchored ✓', _P.green),
+                        if (hasBad) ...[
+                          const SizedBox(width: 4),
+                          _MiniTag('$tampered ⚠', _P.red),
+                        ],
+                      ]),
                     ]),
-                  ]),
-              const SizedBox(width: 4),
-              AnimatedRotation(
-                  turns: expanded ? 0.5 : 0,
-                  duration: const Duration(milliseconds: 220),
-                  child: Icon(Icons.expand_more_rounded,
-                      size: 18, color: C.txtMuted)),
-            ]),
+                const SizedBox(width: 4),
+                AnimatedRotation(
+                    turns: isOpen ? 0.5 : 0,
+                    duration: const Duration(milliseconds: 220),
+                    child: const Icon(Icons.expand_more_rounded,
+                        size: 18, color: _P.muted)),
+              ]),
+            ),
           ),
         ),
-
-        // Evidence tiles
-        if (expanded)
-          _evTilesForCase(C, caseId),
-
-        Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Divider(color: C.border, height: 8)),
-      ],
+        // Evidence tiles (animated expand)
+        AnimatedCrossFade(
+          firstChild: const SizedBox.shrink(),
+          secondChild: Padding(
+            padding: const EdgeInsets.only(left: 18, right: 8, top: 2),
+            child: _buildTiles(caseId),
+          ),
+          crossFadeState: isOpen
+              ? CrossFadeState.showSecond
+              : CrossFadeState.showFirst,
+          duration: const Duration(milliseconds: 220),
+        ),
+        Divider(color: _P.border, height: 12),
+      ]),
     );
   }
 
-  Widget _evTilesForCase(EVC C, String caseId) {
-    final all      = _evidenceMap[caseId];
-    final evidence = _filteredEv(caseId);
-
+  Widget _buildTiles(String caseId) {
+    final all = widget.evidenceMap[caseId];
     if (all == null) {
-      return Padding(
-          padding: const EdgeInsets.symmetric(vertical: 12),
+      return const Padding(
+          padding: EdgeInsets.symmetric(vertical: 10),
           child: Row(mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 SizedBox(width: 14, height: 14,
                     child: CircularProgressIndicator(
-                        color: C.accent, strokeWidth: 2)),
-                const SizedBox(width: 8),
-                Text('Loading...',
-                    style: TextStyle(color: C.txtSecond, fontSize: 12)),
+                        color: _P.accent, strokeWidth: 2)),
+                SizedBox(width: 8),
+                Text('Loading…',
+                    style: TextStyle(color: _P.muted, fontSize: 12)),
               ]));
     }
+    // filter
+    final evidence = all.where((e) {
+      final s = (e['blockchainStatus'] as String?) ?? '';
+      final t = e['isTampered'] == true;
+      if (widget.filter == 'anchored' && s != 'anchored') return false;
+      if (widget.filter == 'tampered' && !t)              return false;
+      if (widget.filter == 'pending'  && s != 'pending')  return false;
+      if (widget.search.isNotEmpty &&
+          !(e['fileName'] ?? '').toLowerCase()
+              .contains(widget.search.toLowerCase())) return false;
+      return true;
+    }).toList();
 
     if (evidence.isEmpty) {
       return Padding(
-          padding: const EdgeInsets.symmetric(vertical: 12),
+          padding: const EdgeInsets.symmetric(vertical: 8),
           child: Center(child: Text(
-              all.isEmpty
-                  ? 'No evidence uploaded yet'
-                  : 'No results',
-              style: TextStyle(color: C.txtMuted, fontSize: 12))));
+              all.isEmpty ? 'No evidence yet' : 'No results',
+              style: const TextStyle(color: _P.muted, fontSize: 12))));
     }
-
-    return Padding(
-        padding: const EdgeInsets.only(left: 20, right: 10),
-        child: Column(children: List.generate(evidence.length,
-                (i) => _evTile(C, evidence[i]))));
+    return Column(children: evidence.map((ev) =>
+        _EvTile(ev: ev, selected: widget.selected,
+            urlCache: widget.urlCache, C: widget.C,
+            onSelect: widget.onSelect))
+        .toList());
   }
+}
 
-  Widget _evTile(EVC C, Map ev) {
+// ── Evidence tile ─────────────────────────────────────────────────────────────
+class _EvTile extends StatefulWidget {
+  final Map ev;
+  final Map<String,dynamic>? selected;
+  final Map<String,String>   urlCache;
+  final EVC C;
+  final ValueChanged<Map<String,dynamic>> onSelect;
+  const _EvTile({required this.ev, required this.selected,
+    required this.urlCache, required this.C, required this.onSelect});
+  @override State<_EvTile> createState() => _EvTileState();
+}
+
+class _EvTileState extends State<_EvTile> {
+  bool _hovered = false;
+  @override
+  Widget build(BuildContext context) {
+    final ev       = widget.ev;
     final id       = ev['_id']?.toString() ?? '';
     final name     = ev['fileName'] as String? ?? 'Unknown';
     final mime     = ev['fileType'] as String? ?? '';
     final status   = ev['blockchainStatus'] as String? ?? 'pending';
     final tampered = ev['isTampered'] == true;
     final path     = ev['storagePath'] as String? ?? '';
-    final isActive = _selected?['_id'] == id;
+    final isActive = widget.selected?['_id'] == id;
 
-    return GestureDetector(
-      onTap: () => _selectEvidence(Map<String, dynamic>.from(ev)),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 160),
-        margin: const EdgeInsets.only(bottom: 3),
-        padding: const EdgeInsets.symmetric(
-            horizontal: 10, vertical: 9),
-        decoration: BoxDecoration(
-            color: isActive
-                ? C.accent.withOpacity(0.08)
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(9),
-            border: Border.all(
-                color: isActive
-                    ? C.accent.withOpacity(0.35)
-                    : Colors.transparent,
-                width: 1.5)),
-        child: Row(children: [
-          // Thumbnail using downloadURL from MongoDB (no CORS issues)
-          _StorageThumbnail(
-              storagePath: path,
-              downloadURL: ev['downloadURL'] as String? ?? '',
-              mime: mime,
-              tampered: tampered, C: C,
-              evidenceId: id,
-              bucket: 'evidence-system-6f225.firebasestorage.app',
-              urlCache: _urlCache),
-          const SizedBox(width: 10),
-          Expanded(child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(name, overflow: TextOverflow.ellipsis,
-                  maxLines: 1,
-                  style: TextStyle(
-                      color: isActive ? C.accent : C.txtPrimary,
-                      fontSize: 12, fontWeight: FontWeight.w600)),
-              const SizedBox(height: 3),
-              Row(children: [
-                _statusDot2(tampered ? 'tampered' : status),
-                const SizedBox(width: 5),
-                Text(_fmtSize(ev['fileSize']),
-                    style: TextStyle(color: C.txtMuted,
-                        fontSize: 9)),
-              ]),
-            ],
-          )),
-          if (isActive)
-            Container(
-                width: 4,
-                height: 32,
-                decoration: BoxDecoration(
-                    color: C.accent,
-                    borderRadius: BorderRadius.circular(2))),
-        ]),
-      ),
-    );
-  }
-
-  // ════════════════════════════════════════════════════════
-  // RIGHT PANEL
-  // ════════════════════════════════════════════════════════
-  Widget _rightPanel(EVC C, Map<String, dynamic> ev) {
-    final id        = ev['_id']?.toString() ?? '';
-    final name      = ev['fileName'] as String? ?? '';
-    final mime      = ev['fileType'] as String? ?? '';
-    final storagePath = ev['storagePath'] as String? ?? '';
-    final status    = ev['blockchainStatus'] as String? ?? 'pending';
-    final tampered  = ev['isTampered'] == true;
-    final fileHash  = ev['fileHash'] as String? ?? '';
-    final txHash    = ev['blockchainTxHash'] as String?;
-    final caseId    = ev['caseId']?.toString() ?? '';
-    final desc      = ev['description'] as String? ?? '';
-
-    return Column(children: [
-
-      // ── Top bar ────────────────────────────────────────
-      Container(
-        height: 60,
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        decoration: BoxDecoration(
-            color: C.card,
-            border: Border(bottom: BorderSide(color: C.border))),
-        child: Row(children: [
-          // File type badge
-          _mimeTag(C, mime),
-          const SizedBox(width: 12),
-          Expanded(child: Text(name,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: C.txtPrimary,
-                  fontSize: 14, fontWeight: FontWeight.w800))),
-          // Action buttons
-          _iconAction(C, Icons.verified_outlined,
-              const Color(0xFF059669), 'Verify integrity',
-                  () => Navigator.push(context,
-                  MaterialPageRoute(builder: (_) =>
-                      VerifyEvidenceScreen(evidenceId: id)))
-                  .then((_) {
-                _evidenceMap.clear();
-                _urlCache.remove(id);  // clear URL cache for this evidence
-                _loadData();
-              })),
-          if (status == 'anchored' && txHash != null) ...[
-            const SizedBox(width: 6),
-            _iconAction(C, Icons.link_rounded,
-                const Color(0xFF7C3AED), 'View on blockchain',
-                    () => Navigator.push(context,
-                    MaterialPageRoute(builder: (_) =>
-                        BlockchainViewerScreen(
-                            evidenceId: id, txHash: txHash)))),
-          ],
-          const SizedBox(width: 6),
-          GestureDetector(
-              onTap: () => setState(() => _selected = null),
-              child: Container(
-                  width: 30, height: 30,
-                  decoration: BoxDecoration(
-                      color: C.bg,
-                      borderRadius: BorderRadius.circular(7),
-                      border: Border.all(color: C.border)),
-                  child: Icon(Icons.close_rounded,
-                      size: 14, color: C.txtSecond))),
-        ]),
-      ),
-
-      // ── Content ────────────────────────────────────────
-      Expanded(child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-
-          // Preview area (wider)
-          Expanded(
-            flex: 3,
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-
-                  // Tamper warning
-                  if (tampered) ...[
-                    _tamperBanner(C, id),
-                    const SizedBox(height: 16),
-                  ],
-
-                  // File preview
-                  _PreviewWidget(
-                    storagePath: storagePath,
-                    downloadURL: ev['downloadURL'] as String? ?? '',
-                    mime: mime,
-                    fileName: name,
-                    evidenceId: id,
-                    bucket: 'evidence-system-6f225.firebasestorage.app',
-                    imgCache: _imgCache,
-                    onImgLoaded: (_) {},
-                    C: C,
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-          // Divider
-          VerticalDivider(color: C.border, width: 1),
-
-          // Metadata sidebar (narrower)
-          SizedBox(
-            width: 280,
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-
-                  // Status
-                  _sideSection(C, 'Status'),
-                  const SizedBox(height: 8),
-                  Row(children: [
-                    _bigBadge(
-                        tampered ? 'TAMPERED' : status.toUpperCase(),
-                        tampered
-                            ? const Color(0xFFDC2626)
-                            : _chainColor(status)),
-                  ]),
-                  const SizedBox(height: 14),
-
-                  // Details
-                  _sideSection(C, 'Evidence Details'),
-                  const SizedBox(height: 8),
-                  _metaItem(C, 'ID', id, mono: true, copy: true),
-                  _metaItem(C, 'File', name),
-                  _metaItem(C, 'Type', mime.isNotEmpty ? mime : '—'),
-                  _metaItem(C, 'Size', _fmtSize(ev['fileSize'])),
-                  _metaItem(C, 'Uploaded',
-                      _fmtDate(ev['createdAt']?.toString())),
-                  _metaItem(C, 'Case ID', caseId,
-                      mono: true, copy: true),
-                  if (desc.isNotEmpty)
-                    _metaItem(C, 'Note', desc),
-                  const SizedBox(height: 14),
-
-                  // Hash
-                  _sideSection(C, 'SHA-256 Hash'),
-                  const SizedBox(height: 8),
-                  _hashBlock(C, fileHash),
-                  const SizedBox(height: 14),
-
-                  // Blockchain
-                  _sideSection(C, 'Blockchain'),
-                  const SizedBox(height: 8),
-                  _metaItem(C, 'Network', 'Polygon Amoy'),
-                  _metaItem(C, 'Status',
-                      status[0].toUpperCase() + status.substring(1),
-                      valueColor: _chainColor(status)),
-                  if (txHash != null)
-                    _metaItem(C, 'TX Hash', txHash,
-                        mono: true, copy: true),
-                  if (ev['anchoredAt'] != null)
-                    _metaItem(C, 'Anchored',
-                        _fmtDate(ev['anchoredAt']?.toString())),
-
-                  const SizedBox(height: 20),
-                ],
-              ),
-            ),
-          ),
-        ],
-      )),
-    ]);
-  }
-
-  // ── Empty right state ─────────────────────────────────
-  Widget _emptyDetailState(EVC C) {
-    return Container(
-      color: C.bg,
-      child: Center(child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-              width: 80, height: 80,
-              decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                      colors: [C.accent.withOpacity(0.15),
-                        C.accent.withOpacity(0.05)]),
-                  shape: BoxShape.circle),
-              child: Icon(Icons.touch_app_outlined,
-                  size: 36, color: C.accent)),
-          const SizedBox(height: 18),
-          Text('Select an evidence file',
-              style: TextStyle(color: C.txtPrimary,
-                  fontSize: 17, fontWeight: FontWeight.w800)),
-          const SizedBox(height: 6),
-          Text('Click any file from the list to preview',
-              style: TextStyle(color: C.txtSecond, fontSize: 13)),
-        ],
-      )),
-    );
-  }
-
-  Widget _tamperBanner(EVC C, String id) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-          color: const Color(0xFFFEF2F2),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-              color: const Color(0xFFDC2626).withOpacity(0.4),
-              width: 1.5)),
-      child: Row(children: [
-        Container(
-            width: 38, height: 38,
-            decoration: BoxDecoration(
-                color: const Color(0xFFDC2626).withOpacity(0.1),
-                shape: BoxShape.circle),
-            child: const Icon(Icons.warning_amber_rounded,
-                size: 20, color: Color(0xFFDC2626))),
-        const SizedBox(width: 12),
-        Expanded(child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Integrity Compromised',
-                style: TextStyle(color: Color(0xFFDC2626),
-                    fontSize: 13, fontWeight: FontWeight.w800)),
-            const SizedBox(height: 2),
-            Text(
-                'This file has been tampered. '
-                    'Hash no longer matches blockchain record.',
-                style: TextStyle(
-                    color: const Color(0xFFDC2626).withOpacity(0.75),
-                    fontSize: 11, height: 1.4)),
-          ],
-        )),
-        const SizedBox(width: 10),
-        GestureDetector(
-            onTap: () => Navigator.push(context,
-                MaterialPageRoute(builder: (_) =>
-                    VerifyEvidenceScreen(evidenceId: id))),
-            child: Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 12, vertical: 7),
-                decoration: BoxDecoration(
-                    color: const Color(0xFFDC2626),
-                    borderRadius: BorderRadius.circular(8)),
-                child: const Text('Re-verify',
-                    style: TextStyle(color: Colors.white,
-                        fontSize: 12, fontWeight: FontWeight.w700)))),
-      ]),
-    );
-  }
-
-  // ── Sidebar helpers ───────────────────────────────────
-  Widget _sideSection(EVC C, String title) {
-    return Row(children: [
-      Container(width: 3, height: 12,
-          color: C.accent,
-          margin: const EdgeInsets.only(right: 8)),
-      Text(title, style: TextStyle(color: C.txtPrimary,
-          fontSize: 11, fontWeight: FontWeight.w800,
-          letterSpacing: 0.5)),
-    ]);
-  }
-
-  Widget _metaItem(EVC C, String label, String value, {
-    bool mono = false, bool copy = false, Color? valueColor,
-  }) {
-    return Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label,
-                  style: TextStyle(color: C.txtMuted, fontSize: 9,
-                      fontWeight: FontWeight.w700, letterSpacing: 0.5)),
-              const SizedBox(height: 2),
-              Row(children: [
-                Expanded(child: SelectableText(value,
-                    style: TextStyle(
-                        color: valueColor ?? C.txtPrimary,
-                        fontSize: 11, fontWeight: FontWeight.w600,
-                        fontFamily: mono ? 'monospace' : null))),
-                if (copy)
-                  GestureDetector(
-                      onTap: () => _copy(value, label),
-                      child: Padding(
-                          padding: const EdgeInsets.only(left: 4),
-                          child: Icon(Icons.copy_outlined,
-                              size: 11, color: C.txtMuted))),
-              ]),
-            ]));
-  }
-
-  Widget _hashBlock(EVC C, String hash) {
-    return GestureDetector(
-        onTap: () => _copy(hash, 'Hash'),
-        child: Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-                color: const Color(0xFF059669).withOpacity(0.06),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                    color: const Color(0xFF059669).withOpacity(0.25))),
-            child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(child: SelectableText(hash,
-                      style: const TextStyle(
-                          color: Color(0xFF059669), fontSize: 9,
-                          fontFamily: 'monospace', height: 1.6))),
-                  const Icon(Icons.copy_outlined,
-                      size: 11, color: Color(0xFF059669)),
-                ])));
-  }
-
-  Widget _mimeTag(EVC C, String mime) {
-    final d = _mimeData(mime);
-    return Container(
-        padding: const EdgeInsets.symmetric(
-            horizontal: 8, vertical: 5),
-        decoration: BoxDecoration(
-            color: d.color.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(7),
-            border: Border.all(color: d.color.withOpacity(0.25))),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(d.icon, size: 13, color: d.color),
-          const SizedBox(width: 5),
-          Text(d.label, style: TextStyle(color: d.color,
-              fontSize: 10, fontWeight: FontWeight.w800)),
-        ]));
-  }
-
-  Widget _bigBadge(String text, Color color) {
-    return Container(
-        padding: const EdgeInsets.symmetric(
-            horizontal: 10, vertical: 5),
-        decoration: BoxDecoration(
-            color: color.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: color.withOpacity(0.3))),
-        child: Text(text, style: TextStyle(color: color,
-            fontSize: 11, fontWeight: FontWeight.w800)));
-  }
-
-  Widget _iconAction(EVC C, IconData icon, Color color,
-      String tip, VoidCallback onTap) {
-    return Tooltip(message: tip,
-        child: GestureDetector(onTap: onTap,
-            child: Container(
-                width: 32, height: 32,
-                decoration: BoxDecoration(
-                    color: color.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: color.withOpacity(0.3))),
-                child: Icon(icon, size: 15, color: color))));
-  }
-
-  Widget _statusDot(EVC C, String status) {
-    final color = switch (status) {
-      'open'         => const Color(0xFF059669),
-      'under_review' => const Color(0xFFD97706),
-      'closed'       => const Color(0xFF94A3B8),
-      _              => const Color(0xFF2563EB),
-    };
-    return Row(mainAxisSize: MainAxisSize.min, children: [
-      Container(width: 6, height: 6,
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit:  (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        onTap: () => widget.onSelect(Map<String,dynamic>.from(ev)),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          margin: const EdgeInsets.only(bottom: 3),
+          padding: const EdgeInsets.symmetric(
+              horizontal: 10, vertical: 9),
           decoration: BoxDecoration(
-              color: color, shape: BoxShape.circle)),
-      const SizedBox(width: 4),
-      Text(status.replaceAll('_', ' '),
-          style: TextStyle(color: color, fontSize: 9,
-              fontWeight: FontWeight.w600)),
-    ]);
-  }
-
-  Widget _statusDot2(String status) {
-    final map = {
-      'anchored': const Color(0xFF059669),
-      'pending':  const Color(0xFFD97706),
-      'failed':   const Color(0xFFDC2626),
-      'tampered': const Color(0xFFDC2626),
-    };
-    final color = map[status] ?? const Color(0xFF94A3B8);
-    return Container(
-        padding: const EdgeInsets.symmetric(
-            horizontal: 6, vertical: 2),
-        decoration: BoxDecoration(
-            color: color.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(20)),
-        child: Text(status.toUpperCase(),
-            style: TextStyle(color: color, fontSize: 8,
-                fontWeight: FontWeight.w800)));
-  }
-
-  Widget _miniTag(String text, Color color) => Container(
-      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-      decoration: BoxDecoration(
-          color: color.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(4)),
-      child: Text(text, style: TextStyle(color: color,
-          fontSize: 9, fontWeight: FontWeight.w700)));
-
-  // Helpers
-  Color _filterColor(String f) => switch (f) {
-    'anchored' => const Color(0xFF059669),
-    'tampered' => const Color(0xFFDC2626),
-    'pending'  => const Color(0xFFD97706),
-    _          => const Color(0xFF2563EB),
-  };
-
-  Color _chainColor(String s) => switch (s) {
-    'anchored' => const Color(0xFF059669),
-    'pending'  => const Color(0xFFD97706),
-    'failed'   => const Color(0xFFDC2626),
-    _          => const Color(0xFF94A3B8),
-  };
-
-  _MimeData _mimeData(String mime) {
-    if (mime.startsWith('image/'))
-      return _MimeData(Icons.image_outlined,
-          const Color(0xFF2563EB), 'IMAGE');
-    if (mime.startsWith('video/'))
-      return _MimeData(Icons.videocam_outlined,
-          const Color(0xFF7C3AED), 'VIDEO');
-    if (mime.startsWith('audio/'))
-      return _MimeData(Icons.music_note_outlined,
-          const Color(0xFF059669), 'AUDIO');
-    if (mime == 'application/pdf')
-      return _MimeData(Icons.picture_as_pdf_outlined,
-          const Color(0xFFDC2626), 'PDF');
-    if (mime.contains('word') || mime.contains('document'))
-      return _MimeData(Icons.description_outlined,
-          const Color(0xFF0284C7), 'DOC');
-    if (mime.contains('spreadsheet') || mime.contains('excel'))
-      return _MimeData(Icons.table_chart_outlined,
-          const Color(0xFF059669), 'XLS');
-    return _MimeData(Icons.insert_drive_file_outlined,
-        const Color(0xFF64748B), 'FILE');
-  }
-
-  String _fmtSize(dynamic b) {
-    if (b == null) return '—';
-    final n = b is int ? b : int.tryParse('$b') ?? 0;
-    if (n < 1024)    return '$n B';
-    if (n < 1048576) return '${(n/1024).toStringAsFixed(1)} KB';
-    return '${(n/1048576).toStringAsFixed(1)} MB';
-  }
-
-  String _fmtDate(String? raw) {
-    if (raw == null) return '—';
-    final t = DateTime.tryParse(raw);
-    if (t == null) return raw;
-    final l = t.toLocal();
-    return '${l.day.toString().padLeft(2,'0')}/'
-        '${l.month.toString().padLeft(2,'0')}/'
-        '${l.year}  '
-        '${l.hour.toString().padLeft(2,'0')}:'
-        '${l.minute.toString().padLeft(2,'0')}';
+              color: isActive
+                  ? _P.accent.withOpacity(0.08)
+                  : _hovered ? _P.accent.withOpacity(0.03)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                  color: isActive
+                      ? _P.accent.withOpacity(0.3)
+                      : Colors.transparent,
+                  width: 1.5)),
+          child: Row(children: [
+            _StorageThumbnail(
+                storagePath: path,
+                downloadURL: ev['downloadURL'] as String? ?? '',
+                mime: mime, tampered: tampered, C: widget.C,
+                evidenceId: id,
+                bucket: 'evidence-system-6f225.firebasestorage.app',
+                urlCache: widget.urlCache),
+            const SizedBox(width: 10),
+            Expanded(child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(name, overflow: TextOverflow.ellipsis, maxLines: 1,
+                      style: TextStyle(
+                          color: isActive ? _P.accent : _P.ink,
+                          fontSize: 12, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 3),
+                  Row(children: [
+                    _StatusPill(tampered ? 'tampered' : status),
+                    const SizedBox(width: 5),
+                    Text(_fmtSize(ev['fileSize']),
+                        style: const TextStyle(
+                            color: _P.muted, fontSize: 9)),
+                  ]),
+                ])),
+            if (isActive)
+              Container(width: 4, height: 30,
+                  decoration: BoxDecoration(
+                      color: _P.accent,
+                      borderRadius: BorderRadius.circular(2))),
+          ]),
+        ),
+      ),
+    );
   }
 }
 
-// ════════════════════════════════════════════════════════════
-// STORAGE THUMBNAIL — 40×40 image using getDownloadURL()
-// Works on Web, Windows, Android, iOS
-// getData() is NOT supported on Flutter Web/Windows
-// ════════════════════════════════════════════════════════════
-class _StorageThumbnail extends StatefulWidget {
-  final String storagePath;
-  final String downloadURL;
-  final String mime;
-  final bool tampered;
-  final EVC C;
-  final String evidenceId;
-  final String bucket;
-  final Map<String, String> urlCache;
+// ─────────────────────────────────────────────────────────────────────────────
+//  META SIDEBAR
+// ─────────────────────────────────────────────────────────────────────────────
+class _MetaSidebar extends StatelessWidget {
+  final Map<String,dynamic> ev;
+  final String id, name, mime, status, fileHash, caseId, desc;
+  final bool   tampered;
+  final String? txHash;
+  final void Function(String,String) onCopy;
 
-  const _StorageThumbnail({
-    required this.storagePath,
-    required this.downloadURL,
-    required this.mime,
-    required this.tampered, required this.C,
-    required this.evidenceId,
-    required this.bucket,
-    required this.urlCache,
+  const _MetaSidebar({
+    required this.ev, required this.id, required this.name,
+    required this.mime, required this.status, required this.tampered,
+    required this.fileHash, required this.txHash, required this.caseId,
+    required this.desc, required this.onCopy,
   });
 
   @override
-  State<_StorageThumbnail> createState() =>
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(16, 20, 16, 20),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _Section('Status'),
+            const SizedBox(height: 8),
+            _BigBadge(tampered ? 'TAMPERED' : status.toUpperCase(),
+                tampered ? _P.red : _chainColor(status)),
+            const SizedBox(height: 16),
+
+            _Section('Evidence Details'),
+            const SizedBox(height: 8),
+            _Meta('ID', id, mono: true,
+                onCopy: () => onCopy(id, 'ID')),
+            _Meta('File', name),
+            _Meta('Type', mime.isNotEmpty ? mime : '—'),
+            _Meta('Size', _fmtSize(ev['fileSize'])),
+            _Meta('Uploaded', _fmtDate(ev['createdAt']?.toString())),
+            _Meta('Case ID', caseId, mono: true,
+                onCopy: () => onCopy(caseId, 'Case ID')),
+            if (desc.isNotEmpty) _Meta('Note', desc),
+            const SizedBox(height: 16),
+
+            _Section('SHA-256 Hash'),
+            const SizedBox(height: 8),
+            _HashBlock(hash: fileHash,
+                onCopy: () => onCopy(fileHash, 'Hash')),
+            const SizedBox(height: 16),
+
+            _Section('Blockchain'),
+            const SizedBox(height: 8),
+            _Meta('Network', 'Polygon Amoy'),
+            _Meta('Status',
+                status[0].toUpperCase() + status.substring(1),
+                valueColor: _chainColor(status)),
+            if (txHash != null)
+              _Meta('TX Hash', txHash!, mono: true,
+                  onCopy: () => onCopy(txHash!, 'TX Hash')),
+            if (ev['anchoredAt'] != null)
+              _Meta('Anchored', _fmtDate(ev['anchoredAt']?.toString())),
+          ]),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  STORAGE THUMBNAIL
+// ─────────────────────────────────────────────────────────────────────────────
+class _StorageThumbnail extends StatefulWidget {
+  final String storagePath, downloadURL, mime, evidenceId, bucket;
+  final bool   tampered;
+  final EVC    C;
+  final Map<String,String> urlCache;
+  const _StorageThumbnail({
+    required this.storagePath, required this.downloadURL,
+    required this.mime, required this.tampered, required this.C,
+    required this.evidenceId, required this.bucket,
+    required this.urlCache,
+  });
+  @override State<_StorageThumbnail> createState() =>
       _StorageThumbnailState();
 }
 
 class _StorageThumbnailState extends State<_StorageThumbnail> {
   String? _url;
-  bool _loading = false;
-  bool _error   = false;
+  bool _loading = false, _error = false;
 
   @override
   void initState() {
     super.initState();
     if (widget.urlCache.containsKey(widget.evidenceId)) {
-      // Use cached token URL
       _url = widget.urlCache[widget.evidenceId];
     } else if (widget.mime.startsWith('image/') &&
         widget.storagePath.isNotEmpty) {
-      // Get token URL from SDK
       _loadUrl();
     }
   }
@@ -1098,11 +934,8 @@ class _StorageThumbnailState extends State<_StorageThumbnail> {
   Future<void> _loadUrl() async {
     if (_loading) return;
     if (mounted) setState(() => _loading = true);
-
-    // Use universal getter — REST API on web, SDK on native
     final url = await getStorageDownloadUrl(
         widget.storagePath, widget.bucket);
-
     if (url.isNotEmpty && mounted) {
       widget.urlCache[widget.evidenceId] = url;
       setState(() { _url = url; _loading = false; });
@@ -1113,109 +946,75 @@ class _StorageThumbnailState extends State<_StorageThumbnail> {
 
   @override
   Widget build(BuildContext context) {
-    final C = widget.C;
-
     if (widget.tampered) {
       return Container(
-          width: 42, height: 42,
+          width: 40, height: 40,
           decoration: BoxDecoration(
-              color: const Color(0xFFDC2626).withOpacity(0.1),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(
-                  color: const Color(0xFFDC2626).withOpacity(0.3))),
+              color: _P.red.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(9),
+              border: Border.all(color: _P.red.withOpacity(0.3))),
           child: const Icon(Icons.warning_amber_rounded,
-              size: 20, color: Color(0xFFDC2626)));
+              size: 18, color: _P.red));
     }
-
     if (widget.mime.startsWith('image/')) {
       if (_loading) {
         return Container(
-            width: 42, height: 42,
+            width: 40, height: 40,
             decoration: BoxDecoration(
-                color: C.bg,
-                borderRadius: BorderRadius.circular(8)),
+                color: _P.inputBg,
+                borderRadius: BorderRadius.circular(9)),
             child: const Center(child: SizedBox(
                 width: 14, height: 14,
                 child: CircularProgressIndicator(
-                    color: Color(0xFF2563EB), strokeWidth: 2))));
+                    color: _P.accent, strokeWidth: 2))));
       }
       if (_url != null && !_error) {
         return ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: Image.network(
-              _url!,
-              width: 42, height: 42, fit: BoxFit.cover,
-              // Proxy URL is same-origin — no CORS issue
-              errorBuilder: (ctx, err, stack) {
-                debugPrint('Thumbnail net error: $err');
-                return _iconBox(C, widget.mime);
-              },
-            ));
+            borderRadius: BorderRadius.circular(9),
+            child: Image.network(_url!,
+                width: 40, height: 40, fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => _iconBox(widget.mime)));
       }
     }
-    return _iconBox(C, widget.mime);
+    return _iconBox(widget.mime);
   }
 
-  Widget _iconBox(EVC C, String mime) {
+  Widget _iconBox(String mime) {
     final d = _MimeData.from(mime);
     return Container(
-        width: 42, height: 42,
+        width: 40, height: 40,
         decoration: BoxDecoration(
             color: d.color.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(8)),
-        child: Icon(d.icon, size: 20, color: d.color));
+            borderRadius: BorderRadius.circular(9)),
+        child: Icon(d.icon, size: 19, color: d.color));
   }
 }
 
-// ════════════════════════════════════════════════════════════
-// PREVIEW WIDGET — full preview using Firebase Storage
-// ════════════════════════════════════════════════════════════
+// ─────────────────────────────────────────────────────────────────────────────
+//  PREVIEW WIDGET
+// ─────────────────────────────────────────────────────────────────────────────
 class _PreviewWidget extends StatefulWidget {
-  final String storagePath;
-  final String downloadURL;
-  final String mime;
-  final String fileName;
-  final String evidenceId;
-  final String bucket;
-  final Map<String, String> imgCache;
+  final String storagePath, downloadURL, mime, fileName, evidenceId, bucket;
+  final Map<String,String>  imgCache;
   final void Function(String?) onImgLoaded;
   final EVC C;
-
   const _PreviewWidget({
-    required this.storagePath,
-    required this.downloadURL,
-    required this.mime,
-    required this.fileName,
-    required this.evidenceId,
-    required this.bucket,
-    required this.imgCache,
-    required this.onImgLoaded,
-    required this.C,
+    required this.storagePath, required this.downloadURL,
+    required this.mime, required this.fileName,
+    required this.evidenceId, required this.bucket,
+    required this.imgCache, required this.onImgLoaded, required this.C,
   });
-
-  @override
-  State<_PreviewWidget> createState() => _PreviewWidgetState();
+  @override State<_PreviewWidget> createState() => _PreviewWidgetState();
 }
 
 class _PreviewWidgetState extends State<_PreviewWidget> {
-
-  // Image URL (getDownloadURL - works on Web/Windows/Mobile)
   String? _imgUrl;
-  bool _imgLoading = false;
-  bool _imgError   = false;
-  // Fallback: use downloadURL from MongoDB if Firebase Storage SDK fails
-
-  // Video
+  bool _imgLoading = false, _imgError = false;
   VideoPlayerController? _videoCtrl;
-  bool _videoReady = false;
-  bool _videoErr   = false;
-  String? _videoUrl;
+  bool _videoReady = false, _videoErr = false;
 
   @override
-  void initState() {
-    super.initState();
-    _initPreview();
-  }
+  void initState() { super.initState(); _init(); }
 
   @override
   void didUpdateWidget(_PreviewWidget old) {
@@ -1223,63 +1022,44 @@ class _PreviewWidgetState extends State<_PreviewWidget> {
     if (old.storagePath != widget.storagePath) {
       _disposeVideo();
       setState(() {
-        _imgUrl      = null;
-        _imgLoading  = false;
-        _imgError    = false;
-        _videoReady  = false;
-        _videoErr    = false;
-        _videoUrl    = null;
+        _imgUrl = null; _imgLoading = false; _imgError = false;
+        _videoReady = false; _videoErr = false;
       });
-      _initPreview();
+      _init();
     }
   }
 
-  void _initPreview() {
-    if (widget.mime.startsWith('image/')) {
-      _loadImage();
-    } else if (widget.mime.startsWith('video/')) {
-      _loadVideoUrl();
-    }
+  void _init() {
+    if (widget.mime.startsWith('image/'))      _loadImage();
+    else if (widget.mime.startsWith('video/')) _loadVideo();
   }
 
   Future<void> _loadImage() async {
-    // Check cache first
     if (widget.imgCache.containsKey(widget.evidenceId)) {
-      final cached = widget.imgCache[widget.evidenceId];
-      if ((cached?.isNotEmpty ?? false) && mounted) {
-        setState(() { _imgUrl = cached; _imgLoading = false; });
-        return;
+      final c = widget.imgCache[widget.evidenceId];
+      if ((c?.isNotEmpty ?? false) && mounted) {
+        setState(() => _imgUrl = c); return;
       }
     }
     if (_imgLoading) return;
     if (mounted) setState(() => _imgLoading = true);
-
-    // Use universal getter — REST API on web, SDK on native
     final url = await getStorageDownloadUrl(
         widget.storagePath, widget.bucket);
-
     if (url.isNotEmpty && mounted) {
-      debugPrint('✅ Image URL: $url');
       widget.imgCache[widget.evidenceId] = url;
       setState(() { _imgUrl = url; _imgLoading = false; });
     } else if (mounted) {
-      debugPrint('🔴 Failed to get image URL for ${widget.storagePath}');
       setState(() { _imgLoading = false; _imgError = true; });
     }
   }
 
-  Future<void> _loadVideoUrl() async {
+  Future<void> _loadVideo() async {
     final url = await getStorageDownloadUrl(
         widget.storagePath, widget.bucket);
-    if (url.isNotEmpty && mounted) {
-      setState(() => _videoUrl = url);
-      _initVideoPlayer(url);
-    } else if (mounted) {
-      setState(() => _videoErr = true);
+    if (url.isEmpty) {
+      if (mounted) setState(() => _videoErr = true); return;
     }
-  }
-
-  void _initVideoPlayer(String url) {
+    // VideoPlayerController.networkUrl — works on ALL platforms
     _videoCtrl = VideoPlayerController.networkUrl(Uri.parse(url))
       ..initialize().then((_) {
         if (mounted) setState(() => _videoReady = true);
@@ -1288,361 +1068,274 @@ class _PreviewWidgetState extends State<_PreviewWidget> {
       });
   }
 
-  void _disposeVideo() {
-    _videoCtrl?.dispose();
-    _videoCtrl = null;
-  }
-
-  @override
-  void dispose() { _disposeVideo(); super.dispose(); }
-
-  // Shows error + copyable URL when image fails to load
-  Widget _imgErrorWidget(EVC C, String url) {
-    return Container(
-        height: 200,
-        child: Center(child: Column(
-            mainAxisSize: MainAxisSize.min, children: [
-          Icon(Icons.broken_image_outlined, size: 36, color: C.txtMuted),
-          const SizedBox(height: 8),
-          Text('Image failed to load', style: TextStyle(
-              color: C.txtMuted, fontSize: 12)),
-          if (url.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            GestureDetector(
-                onTap: () {
-                  Clipboard.setData(ClipboardData(text: url));
-                  ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('URL copied — paste in browser'),
-                          backgroundColor: Color(0xFF2563EB),
-                          behavior: SnackBarBehavior.floating));
-                },
-                child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    decoration: BoxDecoration(
-                        color: const Color(0xFF2563EB).withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(7),
-                        border: Border.all(color: const Color(0xFF2563EB).withOpacity(0.3))),
-                    child: const Row(mainAxisSize: MainAxisSize.min, children: [
-                      Icon(Icons.copy_rounded, size: 12, color: Color(0xFF2563EB)),
-                      SizedBox(width: 6),
-                      Text('Copy Image URL', style: TextStyle(
-                          color: Color(0xFF2563EB), fontSize: 11,
-                          fontWeight: FontWeight.w600)),
-                    ]))),
-          ],
-        ])));
-  }
+  void _disposeVideo() { _videoCtrl?.dispose(); _videoCtrl = null; }
+  @override void dispose() { _disposeVideo(); super.dispose(); }
 
   @override
   Widget build(BuildContext context) {
-    final C    = widget.C;
     final mime = widget.mime;
+    final C    = widget.C;
 
-    // ── IMAGE ──────────────────────────────────────────
     if (mime.startsWith('image/')) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _previewLabel(C, Icons.image_outlined,
-              const Color(0xFF2563EB), 'Image Preview'),
-          const SizedBox(height: 10),
-          Container(
-              decoration: BoxDecoration(
-                  color: Colors.black,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: C.border)),
-              clipBehavior: Clip.hardEdge,
-              constraints: const BoxConstraints(
-                  minHeight: 200, maxHeight: 500),
-              child: _imgUrl == null
-                  ? Container(height: 280,
-                  child: Center(child: Column(
-                      mainAxisSize: MainAxisSize.min, children: [
-                    SizedBox(width: 24, height: 24,
-                        child: CircularProgressIndicator(
-                            color: C.accent, strokeWidth: 2.5)),
-                    const SizedBox(height: 12),
-                    Text('Loading image...',
-                        style: TextStyle(color: C.txtSecond, fontSize: 12)),
-                  ])))
-                  : _imgError
-                  ? _imgErrorWidget(C, _imgUrl ?? '')
-                  : InteractiveViewer(
-                  minScale: 0.5, maxScale: 4.0,
-                  child: Image.network(
-                      _imgUrl!,
-                      width: double.infinity,
-                      fit: BoxFit.contain,
-                      loadingBuilder: (_, child, progress) {
-                        if (progress == null) return child;
-                        return Container(height: 280,
-                            child: Center(child: Column(
-                                mainAxisSize: MainAxisSize.min, children: [
-                              CircularProgressIndicator(
-                                  value: progress.expectedTotalBytes != null
-                                      ? progress.cumulativeBytesLoaded /
-                                      progress.expectedTotalBytes!
-                                      : null,
-                                  color: C.accent, strokeWidth: 2.5),
-                              const SizedBox(height: 10),
-                              Text('Loading image...',
-                                  style: TextStyle(color: C.txtSecond, fontSize: 12)),
-                            ])));
-                      },
-                      errorBuilder: (_, err, __) {
-                        debugPrint('Image load error: $err');
-                        WidgetsBinding.instance.addPostFrameCallback(
-                                (_) { if (mounted) setState(() => _imgError = true); });
-                        return _imgErrorWidget(C, _imgUrl ?? '');
-                      }))),
-        ],
-      );
-    }
-
-    // ── VIDEO ──────────────────────────────────────────
-    if (mime.startsWith('video/')) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _previewLabel(C, Icons.videocam_outlined,
-              const Color(0xFF7C3AED), 'Video Preview'),
-          const SizedBox(height: 10),
-          Container(
-              decoration: BoxDecoration(
-                  color: Colors.black,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: C.border)),
-              clipBehavior: Clip.hardEdge,
-              child: _videoErr
-                  ? Container(height: 200,
-                  child: Center(child: Column(
-                      mainAxisSize: MainAxisSize.min, children: [
-                    Icon(Icons.videocam_off_outlined,
-                        size: 36, color: C.txtMuted),
-                    const SizedBox(height: 8),
-                    Text('Could not load video',
-                        style: TextStyle(
-                            color: C.txtMuted, fontSize: 12)),
-                  ])))
-                  : !_videoReady
-                  ? Container(height: 200,
-                  child: Center(child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        SizedBox(width: 24, height: 24,
-                            child: CircularProgressIndicator(
-                                color: const Color(0xFF7C3AED),
-                                strokeWidth: 2.5)),
-                        const SizedBox(height: 12),
-                        Text('Loading video...',
-                            style: TextStyle(
-                                color: C.txtSecond, fontSize: 12)),
-                      ])))
-                  : _videoPlayer(C)),
-        ],
-      );
-    }
-
-    // ── AUDIO ──────────────────────────────────────────
-    if (mime.startsWith('audio/')) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _previewLabel(C, Icons.music_note_outlined,
-              const Color(0xFF059669), 'Audio File'),
-          const SizedBox(height: 10),
-          _AudioCard(
-              storagePath: widget.storagePath,
-              downloadURL: widget.downloadURL,
-              fileName: widget.fileName,
-              bucket: widget.bucket,
-              C: C),
-        ],
-      );
-    }
-
-    // ── PDF / DOCUMENT ─────────────────────────────────
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _previewLabel(C, _docIcon(mime),
-            _docColor(mime), _docLabel(mime)),
+      return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        _PreviewLabel(Icons.image_outlined, _P.accent, 'Image Preview'),
         const SizedBox(height: 10),
-        _DocCard(
-            storagePath: widget.storagePath,
-            downloadURL: widget.downloadURL,
-            fileName: widget.fileName,
-            mime: mime,
-            bucket: widget.bucket,
-            C: C),
-      ],
-    );
-  }
-
-  Widget _previewLabel(EVC C, IconData icon,
-      Color color, String text) {
-    return Row(children: [
-      Container(width: 4, height: 16,
+        Container(
           decoration: BoxDecoration(
-              color: color,
-              borderRadius: BorderRadius.circular(2)),
-          margin: const EdgeInsets.only(right: 8)),
-      Icon(icon, size: 14, color: color),
-      const SizedBox(width: 6),
-      Text(text, style: TextStyle(color: C.txtPrimary,
-          fontSize: 13, fontWeight: FontWeight.w700)),
+              color: const Color(0xFF0D0D14),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: _P.border),
+              boxShadow: [BoxShadow(
+                  color: Colors.black.withOpacity(0.08),
+                  blurRadius: 20, offset: const Offset(0, 6))]),
+          clipBehavior: Clip.hardEdge,
+          constraints: const BoxConstraints(minHeight: 180, maxHeight: 500),
+          child: _imgLoading || _imgUrl == null
+              ? _imgPlaceholder()
+              : _imgError ? _imgFail()
+              : InteractiveViewer(
+              minScale: 0.5, maxScale: 4.0,
+              child: Image.network(_imgUrl!,
+                  width: double.infinity, fit: BoxFit.contain,
+                  loadingBuilder: (_, child, prog) =>
+                  prog == null ? child : _imgPlaceholder(),
+                  errorBuilder: (_, __, ___) {
+                    WidgetsBinding.instance.addPostFrameCallback(
+                            (_) { if (mounted)
+                          setState(() => _imgError = true); });
+                    return _imgFail();
+                  })),
+        ),
+      ]);
+    }
+
+    if (mime.startsWith('video/')) {
+      return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        _PreviewLabel(Icons.videocam_outlined, _P.purple, 'Video Preview'),
+        const SizedBox(height: 10),
+        Container(
+          decoration: BoxDecoration(
+              color: Colors.black,
+              borderRadius: BorderRadius.circular(14),
+              boxShadow: [BoxShadow(
+                  color: Colors.black.withOpacity(0.12),
+                  blurRadius: 22, offset: const Offset(0, 7))]),
+          clipBehavior: Clip.hardEdge,
+          child: _videoErr
+              ? _videoBroken()
+              : !_videoReady ? _videoLoading()
+              : _VideoControls(ctrl: _videoCtrl!),
+        ),
+      ]);
+    }
+
+    if (mime.startsWith('audio/')) {
+      return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        _PreviewLabel(Icons.headphones_outlined, _P.green, 'Audio File'),
+        const SizedBox(height: 10),
+        _AudioCard(storagePath: widget.storagePath,
+            downloadURL: widget.downloadURL, fileName: widget.fileName,
+            bucket: widget.bucket, C: C),
+      ]);
+    }
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      _PreviewLabel(_docIcon(mime), _docColor(mime), _docLabel(mime)),
+      const SizedBox(height: 10),
+      _DocCard(storagePath: widget.storagePath,
+          downloadURL: widget.downloadURL, fileName: widget.fileName,
+          mime: mime, bucket: widget.bucket, C: C),
     ]);
   }
 
-  Widget _videoPlayer(EVC C) {
-    return Column(children: [
-      AspectRatio(
-          aspectRatio: _videoCtrl!.value.aspectRatio,
-          child: VideoPlayer(_videoCtrl!)),
-      Container(
-        color: const Color(0xFF0D0D0D),
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
-        child: Column(children: [
-          // Progress
-          ValueListenableBuilder(
-              valueListenable: _videoCtrl!,
-              builder: (_, val, __) {
-                final dur = val.duration.inMilliseconds;
-                final pos = val.position.inMilliseconds;
-                return Column(children: [
-                  SliderTheme(
-                      data: SliderTheme.of(context).copyWith(
-                          activeTrackColor: const Color(0xFF7C3AED),
-                          inactiveTrackColor:
-                          Colors.white.withOpacity(0.15),
-                          thumbColor: const Color(0xFF7C3AED),
-                          thumbShape: const RoundSliderThumbShape(
-                              enabledThumbRadius: 6),
-                          trackHeight: 3,
-                          overlayShape: const RoundSliderOverlayShape(
-                              overlayRadius: 14)),
-                      child: Slider(
-                          value: dur > 0
-                              ? (pos / dur).clamp(0, 1) : 0,
-                          onChanged: (v) => _videoCtrl!.seekTo(
-                              Duration(
-                                  milliseconds: (v * dur).toInt())))),
-                  Row(
-                      mainAxisAlignment:
-                      MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(_dur(val.position),
-                            style: const TextStyle(
-                                color: Colors.white54, fontSize: 10)),
-                        Text(_dur(val.duration),
-                            style: const TextStyle(
-                                color: Colors.white54, fontSize: 10)),
-                      ]),
-                ]);
-              }),
-          // Controls
-          Row(mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                _vidBtn(Icons.replay_10_rounded, () {
-                  _videoCtrl!.seekTo(
-                      _videoCtrl!.value.position -
-                          const Duration(seconds: 10));
-                }),
-                const SizedBox(width: 20),
-                GestureDetector(
-                    onTap: () => setState(() {
-                      _videoCtrl!.value.isPlaying
-                          ? _videoCtrl!.pause()
-                          : _videoCtrl!.play();
-                    }),
-                    child: Container(
-                        width: 52, height: 52,
-                        decoration: BoxDecoration(
-                            color: const Color(0xFF7C3AED),
-                            shape: BoxShape.circle,
-                            boxShadow: [BoxShadow(
-                                color: const Color(0xFF7C3AED).withOpacity(0.4),
-                                blurRadius: 16,
-                                offset: const Offset(0, 4))]),
-                        child: Icon(
-                            _videoCtrl!.value.isPlaying
-                                ? Icons.pause_rounded
-                                : Icons.play_arrow_rounded,
-                            color: Colors.white, size: 28))),
-                const SizedBox(width: 20),
-                _vidBtn(Icons.forward_10_rounded, () {
-                  _videoCtrl!.seekTo(
-                      _videoCtrl!.value.position +
-                          const Duration(seconds: 10));
-                }),
-              ]),
-        ]),
-      ),
-    ]);
+  Widget _imgPlaceholder() => SizedBox(height: 260,
+      child: Center(child: Column(mainAxisSize: MainAxisSize.min,
+          children: const [
+            SizedBox(width: 24, height: 24,
+                child: CircularProgressIndicator(
+                    color: _P.accent, strokeWidth: 2.5)),
+            SizedBox(height: 12),
+            Text('Loading image…',
+                style: TextStyle(color: _P.muted, fontSize: 12)),
+          ])));
+
+  Widget _imgFail() => SizedBox(height: 200,
+      child: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+        const Icon(Icons.broken_image_outlined, size: 36, color: _P.muted),
+        const SizedBox(height: 8),
+        const Text('Could not load image',
+            style: TextStyle(color: _P.muted, fontSize: 12)),
+        if (_imgUrl?.isNotEmpty == true) ...[
+          const SizedBox(height: 10),
+          TextButton.icon(
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: _imgUrl!));
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                    content: Text('URL copied — paste in browser'),
+                    backgroundColor: _P.accent,
+                    behavior: SnackBarBehavior.floating));
+              },
+              icon: const Icon(Icons.copy_rounded, size: 13),
+              label: const Text('Copy URL')),
+        ],
+      ])));
+
+  Widget _videoBroken() => const SizedBox(height: 200,
+      child: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Icon(Icons.videocam_off_outlined, size: 36, color: _P.muted),
+        SizedBox(height: 8),
+        Text('Could not load video',
+            style: TextStyle(color: _P.muted, fontSize: 12)),
+      ])));
+
+  Widget _videoLoading() => const SizedBox(height: 200,
+      child: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+        SizedBox(width: 24, height: 24,
+            child: CircularProgressIndicator(
+                color: _P.purple, strokeWidth: 2.5)),
+        SizedBox(height: 12),
+        Text('Loading video…',
+            style: TextStyle(color: _P.muted, fontSize: 12)),
+      ])));
+
+  Color    _docColor(String m) {
+    if (m == 'application/pdf') return _P.red;
+    if (m.contains('word') || m.contains('document')) return _P.accent;
+    if (m.contains('sheet') || m.contains('excel')) return _P.green;
+    return _P.muted;
   }
-
-  Widget _vidBtn(IconData icon, VoidCallback onTap) =>
-      GestureDetector(onTap: onTap,
-          child: Container(
-              width: 38, height: 38,
-              decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.08),
-                  shape: BoxShape.circle),
-              child: Icon(icon, size: 18,
-                  color: Colors.white.withOpacity(0.8))));
-
-  String _dur(Duration d) {
-    final m = d.inMinutes.remainder(60).toString().padLeft(2,'0');
-    final s = d.inSeconds.remainder(60).toString().padLeft(2,'0');
-    return '$m:$s';
-  }
-
-  Color _docColor(String mime) {
-    if (mime == 'application/pdf')    return const Color(0xFFDC2626);
-    if (mime.contains('word') || mime.contains('document'))
-      return const Color(0xFF2563EB);
-    if (mime.contains('sheet') || mime.contains('excel'))
-      return const Color(0xFF059669);
-    return const Color(0xFF64748B);
-  }
-
-  IconData _docIcon(String mime) {
-    if (mime == 'application/pdf')    return Icons.picture_as_pdf_outlined;
-    if (mime.contains('word') || mime.contains('document'))
+  IconData _docIcon(String m) {
+    if (m == 'application/pdf') return Icons.picture_as_pdf_outlined;
+    if (m.contains('word') || m.contains('document'))
       return Icons.description_outlined;
-    if (mime.contains('sheet') || mime.contains('excel'))
+    if (m.contains('sheet') || m.contains('excel'))
       return Icons.table_chart_outlined;
     return Icons.insert_drive_file_outlined;
   }
-
-  String _docLabel(String mime) {
-    if (mime == 'application/pdf')    return 'PDF Document';
-    if (mime.contains('word') || mime.contains('document'))
-      return 'Word Document';
-    if (mime.contains('sheet') || mime.contains('excel'))
-      return 'Spreadsheet';
-    if (mime == 'text/plain')         return 'Text File';
+  String   _docLabel(String m) {
+    if (m == 'application/pdf') return 'PDF Document';
+    if (m.contains('word') || m.contains('document')) return 'Word Document';
+    if (m.contains('sheet') || m.contains('excel'))   return 'Spreadsheet';
     return 'Document';
   }
 }
 
-// ════════════════════════════════════════════════════════════
-// AUDIO CARD
-// ════════════════════════════════════════════════════════════
-class _AudioCard extends StatefulWidget {
-  final String storagePath;
-  final String downloadURL;
-  final String fileName;
-  final String bucket;
-  final EVC C;
-  const _AudioCard({required this.storagePath,
-    required this.downloadURL,
-    required this.fileName,
-    required this.bucket,
-    required this.C});
+// ─────────────────────────────────────────────────────────────────────────────
+//  VIDEO CONTROLS — cross-platform (Android · iOS · Web · Windows · macOS)
+// ─────────────────────────────────────────────────────────────────────────────
+class _VideoControls extends StatefulWidget {
+  final VideoPlayerController ctrl;
+  const _VideoControls({required this.ctrl});
+  @override State<_VideoControls> createState() => _VideoControlsState();
+}
+
+class _VideoControlsState extends State<_VideoControls> {
+  @override void initState() {
+    super.initState(); widget.ctrl.addListener(_rebuild);
+  }
+  void _rebuild() { if (mounted) setState(() {}); }
+  @override void dispose() {
+    widget.ctrl.removeListener(_rebuild); super.dispose();
+  }
+
+  String _fmt(Duration d) =>
+      '${d.inMinutes.remainder(60).toString().padLeft(2,'0')}:'
+          '${d.inSeconds.remainder(60).toString().padLeft(2,'0')}';
 
   @override
-  State<_AudioCard> createState() => _AudioCardState();
+  Widget build(BuildContext context) {
+    final v   = widget.ctrl.value;
+    final dur = v.duration.inMilliseconds;
+    final pos = v.position.inMilliseconds;
+    final frac = dur > 0 ? (pos / dur).clamp(0.0, 1.0) : 0.0;
+
+    return Column(children: [
+      AspectRatio(
+          aspectRatio: v.aspectRatio > 0 ? v.aspectRatio : 16/9,
+          child: VideoPlayer(widget.ctrl)),
+      Container(
+        color: const Color(0xFF0D0D14),
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+        child: Column(children: [
+          SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+                activeTrackColor: _P.purple,
+                inactiveTrackColor: Colors.white.withOpacity(0.14),
+                thumbColor: _P.purple,
+                thumbShape: const RoundSliderThumbShape(
+                    enabledThumbRadius: 6),
+                trackHeight: 3,
+                overlayShape: const RoundSliderOverlayShape(
+                    overlayRadius: 14)),
+            child: Slider(
+                value: frac.toDouble(),
+                onChanged: (val) => widget.ctrl.seekTo(
+                    Duration(milliseconds: (val * dur).toInt()))),
+          ),
+          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(_fmt(v.position),
+                    style: const TextStyle(
+                        color: Colors.white54, fontSize: 10)),
+                Text(_fmt(v.duration),
+                    style: const TextStyle(
+                        color: Colors.white54, fontSize: 10)),
+              ]),
+          const SizedBox(height: 10),
+          Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+            _VidBtn(Icons.replay_10_rounded, () => widget.ctrl.seekTo(
+                v.position - const Duration(seconds: 10))),
+            const SizedBox(width: 20),
+            GestureDetector(
+                onTap: () => v.isPlaying
+                    ? widget.ctrl.pause()
+                    : widget.ctrl.play(),
+                child: Container(
+                    width: 52, height: 52,
+                    decoration: BoxDecoration(
+                        color: _P.purple, shape: BoxShape.circle,
+                        boxShadow: [BoxShadow(
+                            color: _P.purple.withOpacity(0.4),
+                            blurRadius: 18, offset: const Offset(0, 5))]),
+                    child: Icon(
+                        v.isPlaying
+                            ? Icons.pause_rounded
+                            : Icons.play_arrow_rounded,
+                        color: Colors.white, size: 28))),
+            const SizedBox(width: 20),
+            _VidBtn(Icons.forward_10_rounded, () => widget.ctrl.seekTo(
+                v.position + const Duration(seconds: 10))),
+          ]),
+        ]),
+      ),
+    ]);
+  }
+}
+
+class _VidBtn extends StatelessWidget {
+  final IconData i; final VoidCallback t;
+  const _VidBtn(this.i, this.t);
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+      onTap: t,
+      child: Container(
+          width: 38, height: 38,
+          decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.08),
+              shape: BoxShape.circle),
+          child: Icon(i, size: 18,
+              color: Colors.white.withOpacity(0.8))));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  AUDIO CARD
+// ─────────────────────────────────────────────────────────────────────────────
+class _AudioCard extends StatefulWidget {
+  final String storagePath, downloadURL, fileName, bucket;
+  final EVC C;
+  const _AudioCard({required this.storagePath, required this.downloadURL,
+    required this.fileName, required this.bucket, required this.C});
+  @override State<_AudioCard> createState() => _AudioCardState();
 }
 
 class _AudioCardState extends State<_AudioCard>
@@ -1656,17 +1349,11 @@ class _AudioCardState extends State<_AudioCard>
   void initState() {
     super.initState();
     _waveCtrl = AnimationController(vsync: this,
-        duration: const Duration(milliseconds: 700))
-      ..repeat(reverse: true);
+        duration: const Duration(milliseconds: 700))..repeat(reverse: true);
     _wave = _waveCtrl.drive(Tween(begin: 0.2, end: 1.0)
         .chain(CurveTween(curve: Curves.easeInOut)));
-    // Use MongoDB downloadURL directly
-    // Always fetch token URL from SDK
     _fetchUrl();
   }
-
-  @override
-  void dispose() { _waveCtrl.dispose(); super.dispose(); }
 
   Future<void> _fetchUrl() async {
     final url = await getStorageDownloadUrl(
@@ -1674,351 +1361,682 @@ class _AudioCardState extends State<_AudioCard>
     if (url.isNotEmpty && mounted) setState(() => _url = url);
   }
 
+  @override void dispose() { _waveCtrl.dispose(); super.dispose(); }
+
   @override
   Widget build(BuildContext context) {
-    final C = widget.C;
     return Container(
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
           gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                const Color(0xFF059669).withOpacity(0.1),
-                const Color(0xFF059669).withOpacity(0.03)]),
+              begin: Alignment.topLeft, end: Alignment.bottomRight,
+              colors: [_P.green.withOpacity(0.08),
+                _P.green.withOpacity(0.02)]),
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-              color: const Color(0xFF059669).withOpacity(0.25))),
+          border: Border.all(color: _P.green.withOpacity(0.2)),
+          boxShadow: [BoxShadow(
+              color: _P.green.withOpacity(0.06),
+              blurRadius: 14, offset: const Offset(0, 4))]),
       child: Column(children: [
-        // Waveform
         Row(mainAxisAlignment: MainAxisAlignment.center,
             children: List.generate(32, (i) {
               final baseH = 6.0 + (i % 7) * 5.0;
               return AnimatedBuilder(
                   animation: _wave,
                   builder: (_, __) {
-                    final factor = _playing
-                        ? _wave.value * ((i % 3 == 0) ? 1.0 : 0.6)
-                        : 0.3;
+                    final f = _playing
+                        ? _wave.value * ((i % 3 == 0) ? 1.0 : 0.6) : 0.3;
                     return Container(
                         width: 3,
-                        margin: const EdgeInsets.symmetric(
-                            horizontal: 1.5),
-                        height: baseH * factor + 4,
+                        margin: const EdgeInsets.symmetric(horizontal: 1.5),
+                        height: baseH * f + 4,
                         decoration: BoxDecoration(
-                            color: const Color(0xFF059669)
-                                .withOpacity(_playing ? 0.8 : 0.3),
+                            color: _P.green.withOpacity(
+                                _playing ? 0.8 : 0.3),
                             borderRadius: BorderRadius.circular(2)));
                   });
             })),
         const SizedBox(height: 20),
-        Text(widget.fileName,
-            textAlign: TextAlign.center,
+        Text(widget.fileName, textAlign: TextAlign.center,
             overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: C.txtPrimary,
+            style: const TextStyle(color: _P.ink,
                 fontSize: 14, fontWeight: FontWeight.w700)),
         const SizedBox(height: 4),
         const Text('Audio Evidence',
-            style: TextStyle(color: Color(0xFF059669),
+            style: TextStyle(color: _P.green,
                 fontSize: 11, fontWeight: FontWeight.w500)),
         const SizedBox(height: 20),
-        // Play button
         GestureDetector(
             onTap: () => setState(() => _playing = !_playing),
             child: Container(
                 width: 56, height: 56,
                 decoration: BoxDecoration(
-                    color: const Color(0xFF059669),
-                    shape: BoxShape.circle,
+                    color: _P.green, shape: BoxShape.circle,
                     boxShadow: [BoxShadow(
-                        color: const Color(0xFF059669).withOpacity(0.4),
-                        blurRadius: 20, offset: const Offset(0, 6))]),
+                        color: _P.green.withOpacity(0.35),
+                        blurRadius: 18, offset: const Offset(0, 5))]),
                 child: Icon(
-                    _playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                    _playing ? Icons.pause_rounded
+                        : Icons.play_arrow_rounded,
                     color: Colors.white, size: 30))),
-        const SizedBox(height: 16),
-        if (_url != null)
-          GestureDetector(
-              onTap: () {
-                Clipboard.setData(ClipboardData(text: _url!));
-                ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                        content: Text('Audio URL copied — paste in browser'),
-                        backgroundColor: Color(0xFF059669),
-                        duration: Duration(seconds: 2),
-                        behavior: SnackBarBehavior.floating));
-              },
-              child: Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 16, vertical: 8),
-                  decoration: BoxDecoration(
-                      color: const Color(0xFF059669).withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(
-                          color: const Color(0xFF059669).withOpacity(0.3))),
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    const Icon(Icons.copy_rounded,
-                        size: 13, color: Color(0xFF059669)),
-                    const SizedBox(width: 6),
-                    const Text('Copy URL to play',
-                        style: TextStyle(
-                            color: Color(0xFF059669), fontSize: 12,
-                            fontWeight: FontWeight.w600)),
-                  ]))),
+        if (_url != null) ...[
+          const SizedBox(height: 16),
+          TextButton.icon(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: _url!));
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                  content: Text('Audio URL copied — paste in browser'),
+                  backgroundColor: _P.green,
+                  duration: Duration(seconds: 2),
+                  behavior: SnackBarBehavior.floating));
+            },
+            icon: const Icon(Icons.copy_rounded,
+                size: 13, color: _P.green),
+            label: const Text('Copy URL to play',
+                style: TextStyle(color: _P.green, fontSize: 12,
+                    fontWeight: FontWeight.w600)),
+          ),
+        ],
       ]),
     );
   }
 }
 
-// ════════════════════════════════════════════════════════════
-// DOCUMENT CARD
-// ════════════════════════════════════════════════════════════
+// ─────────────────────────────────────────────────────────────────────────────
+//  DOCUMENT CARD
+// ─────────────────────────────────────────────────────────────────────────────
 class _DocCard extends StatefulWidget {
-  final String storagePath;
-  final String downloadURL;
-  final String fileName;
-  final String mime;
-  final String bucket;
+  final String storagePath, downloadURL, fileName, mime, bucket;
   final EVC C;
-  const _DocCard({required this.storagePath,
-    required this.downloadURL,
+  const _DocCard({required this.storagePath, required this.downloadURL,
     required this.fileName, required this.mime,
-    required this.bucket,
-    required this.C});
-
-  @override
-  State<_DocCard> createState() => _DocCardState();
+    required this.bucket, required this.C});
+  @override State<_DocCard> createState() => _DocCardState();
 }
 
 class _DocCardState extends State<_DocCard> {
   String? _url;
   bool _copied = false;
 
-  @override
-  void initState() {
-    super.initState();
-    // Use MongoDB downloadURL directly — no SDK call needed
-    // Always fetch token URL from SDK
-    _fetchUrl();
-  }
+  @override void initState() { super.initState(); _fetch(); }
 
-  Future<void> _fetchUrl() async {
+  Future<void> _fetch() async {
     final url = await getStorageDownloadUrl(
         widget.storagePath, widget.bucket);
     if (url.isNotEmpty && mounted) setState(() => _url = url);
   }
 
-  Color get _color {
-    if (widget.mime == 'application/pdf')
-      return const Color(0xFFDC2626);
-    if (widget.mime.contains('word') ||
-        widget.mime.contains('document'))
-      return const Color(0xFF2563EB);
-    if (widget.mime.contains('sheet') ||
-        widget.mime.contains('excel'))
-      return const Color(0xFF059669);
-    return const Color(0xFF64748B);
+  Color get _c {
+    if (widget.mime == 'application/pdf') return _P.red;
+    if (widget.mime.contains('word') || widget.mime.contains('document'))
+      return _P.accent;
+    if (widget.mime.contains('sheet') || widget.mime.contains('excel'))
+      return _P.green;
+    return _P.muted;
   }
-
-  IconData get _icon {
+  IconData _icon() {
     if (widget.mime == 'application/pdf')
       return Icons.picture_as_pdf_outlined;
-    if (widget.mime.contains('word') ||
-        widget.mime.contains('document'))
+    if (widget.mime.contains('word') || widget.mime.contains('document'))
       return Icons.description_outlined;
-    if (widget.mime.contains('sheet') ||
-        widget.mime.contains('excel'))
+    if (widget.mime.contains('sheet') || widget.mime.contains('excel'))
       return Icons.table_chart_outlined;
     return Icons.insert_drive_file_outlined;
   }
+  String _label() {
+    if (widget.mime == 'application/pdf') return 'PDF Document';
+    if (widget.mime.contains('word') || widget.mime.contains('document'))
+      return 'Word Document';
+    if (widget.mime.contains('sheet') || widget.mime.contains('excel'))
+      return 'Spreadsheet';
+    return 'Document';
+  }
 
   @override
-  Widget build(BuildContext context) {
-    final C = widget.C;
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(28),
-      decoration: BoxDecoration(
-          color: _color.withOpacity(0.04),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: _color.withOpacity(0.2))),
-      child: Column(children: [
-        Container(
-            width: 70, height: 70,
-            decoration: BoxDecoration(
-                color: _color.withOpacity(0.1),
-                shape: BoxShape.circle),
-            child: Icon(_icon, size: 34, color: _color)),
-        const SizedBox(height: 14),
-        Text(widget.fileName,
-            textAlign: TextAlign.center,
-            overflow: TextOverflow.ellipsis,
-            maxLines: 2,
-            style: TextStyle(color: C.txtPrimary,
-                fontSize: 14, fontWeight: FontWeight.w700)),
-        const SizedBox(height: 6),
-        Container(
-            padding: const EdgeInsets.symmetric(
-                horizontal: 10, vertical: 3),
-            decoration: BoxDecoration(
-                color: _color.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(20)),
-            child: Text(
-                widget.mime == 'application/pdf' ? 'PDF Document'
-                    : widget.mime.contains('word') ? 'Word Document'
-                    : widget.mime.contains('sheet') ? 'Spreadsheet'
-                    : 'Document',
-                style: TextStyle(color: _color, fontSize: 10,
-                    fontWeight: FontWeight.w700))),
-        const SizedBox(height: 20),
-        if (_url == null)
-          SizedBox(width: 18, height: 18,
-              child: CircularProgressIndicator(
-                  color: _color, strokeWidth: 2))
-        else
-          GestureDetector(
-            onTap: () {
-              Clipboard.setData(ClipboardData(text: _url!));
-              setState(() => _copied = true);
-              Future.delayed(const Duration(seconds: 2),
-                      () { if (mounted) setState(() => _copied = false); });
-              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                  content: const Text(
-                      'URL copied — paste in browser to open'),
-                  backgroundColor: _color,
-                  duration: const Duration(seconds: 2),
-                  behavior: SnackBarBehavior.floating,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8))));
-            },
-            child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 20, vertical: 12),
-                decoration: BoxDecoration(
-                    color: _copied
-                        ? const Color(0xFF059669) : _color,
-                    borderRadius: BorderRadius.circular(10),
-                    boxShadow: [BoxShadow(
-                        color: (_copied
-                            ? const Color(0xFF059669) : _color)
-                            .withOpacity(0.3),
-                        blurRadius: 12, offset: const Offset(0, 4))]),
-                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(
-                      _copied ? Icons.check_rounded
-                          : Icons.copy_rounded,
-                      color: Colors.white, size: 16),
-                  const SizedBox(width: 8),
-                  Text(
-                      _copied ? 'Copied!' : 'Copy File URL',
-                      style: const TextStyle(color: Colors.white,
-                          fontSize: 13, fontWeight: FontWeight.w700)),
-                ])),
-          ),
-        const SizedBox(height: 8),
-        Text(
-            'Copy the URL and paste in your browser\nto open or download this file.',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: C.txtMuted,
-                fontSize: 11, height: 1.5)),
-      ]),
-    );
-  }
+  Widget build(BuildContext context) => Container(
+    width: double.infinity,
+    padding: const EdgeInsets.all(28),
+    decoration: BoxDecoration(
+        color: _c.withOpacity(0.04),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _c.withOpacity(0.15)),
+        boxShadow: [BoxShadow(
+            color: _c.withOpacity(0.05),
+            blurRadius: 14, offset: const Offset(0, 4))]),
+    child: Column(children: [
+      Container(
+          width: 68, height: 68,
+          decoration: BoxDecoration(
+              color: _c.withOpacity(0.1), shape: BoxShape.circle),
+          child: Icon(_icon(), size: 32, color: _c)),
+      const SizedBox(height: 14),
+      Text(widget.fileName, textAlign: TextAlign.center,
+          overflow: TextOverflow.ellipsis, maxLines: 2,
+          style: const TextStyle(color: _P.ink,
+              fontSize: 14, fontWeight: FontWeight.w700)),
+      const SizedBox(height: 6),
+      Container(
+          padding: const EdgeInsets.symmetric(
+              horizontal: 10, vertical: 3),
+          decoration: BoxDecoration(
+              color: _c.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(20)),
+          child: Text(_label(),
+              style: TextStyle(color: _c, fontSize: 10,
+                  fontWeight: FontWeight.w700))),
+      const SizedBox(height: 22),
+      if (_url == null)
+        SizedBox(width: 20, height: 20,
+            child: CircularProgressIndicator(color: _c, strokeWidth: 2))
+      else
+        GestureDetector(
+          onTap: () {
+            Clipboard.setData(ClipboardData(text: _url!));
+            setState(() => _copied = true);
+            Future.delayed(const Duration(seconds: 2), () {
+              if (mounted) setState(() => _copied = false);
+            });
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                content: const Text('URL copied — paste in browser'),
+                backgroundColor: _c, behavior: SnackBarBehavior.floating,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10))));
+          },
+          child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 20, vertical: 12),
+              decoration: BoxDecoration(
+                  color: _copied ? _P.green : _c,
+                  borderRadius: BorderRadius.circular(10),
+                  boxShadow: [BoxShadow(
+                      color: (_copied ? _P.green : _c).withOpacity(0.28),
+                      blurRadius: 14, offset: const Offset(0, 5))]),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(_copied ? Icons.check_rounded : Icons.copy_rounded,
+                    color: Colors.white, size: 16),
+                const SizedBox(width: 8),
+                Text(_copied ? 'Copied!' : 'Copy File URL',
+                    style: const TextStyle(color: Colors.white,
+                        fontSize: 13, fontWeight: FontWeight.w700)),
+              ])),
+        ),
+      const SizedBox(height: 10),
+      const Text('Copy the URL and open in your browser.',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: _P.muted, fontSize: 11)),
+    ]),
+  );
 }
 
-// ════════════════════════════════════════════════════════════
-// HELPERS
-// ════════════════════════════════════════════════════════════
-class _MimeData {
-  final IconData icon;
-  final Color color;
-  final String label;
-  const _MimeData(this.icon, this.color, this.label);
+// ─────────────────────────────────────────────────────────────────────────────
+//  TAMPER BANNER
+// ─────────────────────────────────────────────────────────────────────────────
+class _TamperBanner extends StatelessWidget {
+  final String evidenceId;
+  const _TamperBanner({required this.evidenceId});
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(14),
+    decoration: BoxDecoration(
+        color: _P.redSoft,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _P.red.withOpacity(0.35), width: 1.5),
+        boxShadow: [BoxShadow(
+            color: _P.red.withOpacity(0.07),
+            blurRadius: 14, offset: const Offset(0, 4))]),
+    child: Row(children: [
+      Container(
+          width: 38, height: 38,
+          decoration: BoxDecoration(
+              color: _P.red.withOpacity(0.12), shape: BoxShape.circle),
+          child: const Icon(Icons.warning_amber_rounded,
+              size: 20, color: _P.red)),
+      const SizedBox(width: 12),
+      Expanded(child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Text('Integrity Compromised',
+            style: TextStyle(color: _P.red,
+                fontSize: 13, fontWeight: FontWeight.w800)),
+        const SizedBox(height: 2),
+        Text('Hash no longer matches the blockchain record.',
+            style: TextStyle(color: _P.red.withOpacity(0.75),
+                fontSize: 11, height: 1.4)),
+      ])),
+      const SizedBox(width: 10),
+      GestureDetector(
+          onTap: () => Navigator.push(context,
+              MaterialPageRoute(builder: (_) =>
+                  VerifyEvidenceScreen(evidenceId: evidenceId))),
+          child: Container(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 12, vertical: 7),
+              decoration: BoxDecoration(
+                  color: _P.red,
+                  borderRadius: BorderRadius.circular(8),
+                  boxShadow: [BoxShadow(
+                      color: _P.red.withOpacity(0.3),
+                      blurRadius: 10, offset: const Offset(0, 3))]),
+              child: const Text('Re-verify',
+                  style: TextStyle(color: Colors.white,
+                      fontSize: 12, fontWeight: FontWeight.w700)))),
+    ]),
+  );
+}
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  SMALL UI ATOMS
+// ─────────────────────────────────────────────────────────────────────────────
+class _FilterChip extends StatefulWidget {
+  final String label; final bool active;
+  final Color color; final VoidCallback onTap;
+  const _FilterChip({required this.label, required this.active,
+    required this.color, required this.onTap});
+  @override State<_FilterChip> createState() => _FilterChipState();
+}
+class _FilterChipState extends State<_FilterChip> {
+  bool _hov = false;
+  @override
+  Widget build(BuildContext context) => MouseRegion(
+    cursor: SystemMouseCursors.click,
+    onEnter: (_) => setState(() => _hov = true),
+    onExit:  (_) => setState(() => _hov = false),
+    child: GestureDetector(onTap: widget.onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 140),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+        decoration: BoxDecoration(
+            color: widget.active ? widget.color
+                : _hov ? widget.color.withOpacity(0.08)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+                color: widget.active ? widget.color : _P.border)),
+        child: Text(widget.label,
+            style: TextStyle(
+                color: widget.active ? Colors.white
+                    : _hov ? widget.color : _P.slate,
+                fontSize: 11,
+                fontWeight: widget.active
+                    ? FontWeight.w700 : FontWeight.w500)),
+      ),
+    ),
+  );
+}
+
+class _IconBtn extends StatefulWidget {
+  final IconData i; final VoidCallback t; final String tip;
+  const _IconBtn(this.i, this.t, this.tip);
+  @override State<_IconBtn> createState() => _IconBtnState();
+}
+class _IconBtnState extends State<_IconBtn> {
+  bool _hov = false;
+  @override
+  Widget build(BuildContext context) => Tooltip(
+    message: widget.tip,
+    child: MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hov = true),
+      onExit:  (_) => setState(() => _hov = false),
+      child: GestureDetector(onTap: widget.t,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 140),
+          width: 32, height: 32,
+          decoration: BoxDecoration(
+              color: _hov ? _P.accentSoft : _P.inputBg,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                  color: _hov ? _P.accent.withOpacity(0.3) : _P.border)),
+          child: Icon(widget.i, size: 15,
+              color: _hov ? _P.accent : _P.slate),
+        ),
+      ),
+    ),
+  );
+}
+
+class _ActionBtn extends StatefulWidget {
+  final IconData i; final Color c; final String tip; final VoidCallback t;
+  const _ActionBtn(this.i, this.c, this.tip, this.t);
+  @override State<_ActionBtn> createState() => _ActionBtnState();
+}
+class _ActionBtnState extends State<_ActionBtn> {
+  bool _hov = false;
+  @override
+  Widget build(BuildContext context) => Tooltip(
+    message: widget.tip,
+    child: MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hov = true),
+      onExit:  (_) => setState(() => _hov = false),
+      child: GestureDetector(onTap: widget.t,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 140),
+          width: 32, height: 32,
+          decoration: BoxDecoration(
+              color: widget.c.withOpacity(_hov ? 0.18 : 0.1),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: widget.c.withOpacity(0.3)),
+              boxShadow: _hov ? [BoxShadow(
+                  color: widget.c.withOpacity(0.18),
+                  blurRadius: 8, offset: const Offset(0, 2))] : []),
+          child: Icon(widget.i, size: 15, color: widget.c),
+        ),
+      ),
+    ),
+  );
+}
+
+Widget _StatusDot(String status) {
+  final color = switch (status) {
+    'open'         => _P.green,
+    'under_review' => _P.orange,
+    'closed'       => _P.muted,
+    _              => _P.accent,
+  };
+  return Row(mainAxisSize: MainAxisSize.min, children: [
+    Container(width: 5, height: 5,
+        decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+    const SizedBox(width: 4),
+    Text(status.replaceAll('_', ' '),
+        style: TextStyle(color: color, fontSize: 9,
+            fontWeight: FontWeight.w600)),
+  ]);
+}
+
+Widget _StatusPill(String status) {
+  final map = { 'anchored': _P.green, 'pending': _P.orange,
+    'failed': _P.red, 'tampered': _P.red };
+  final color = map[status] ?? _P.muted;
+  return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+          color: color.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(20)),
+      child: Text(status.toUpperCase(),
+          style: TextStyle(color: color, fontSize: 8,
+              fontWeight: FontWeight.w800)));
+}
+
+Widget _MiniTag(String text, Color color) => Container(
+  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+  decoration: BoxDecoration(
+      color: color.withOpacity(0.1),
+      borderRadius: BorderRadius.circular(4)),
+  child: Text(text,
+      style: TextStyle(color: color, fontSize: 9,
+          fontWeight: FontWeight.w700)),
+);
+
+Widget _MimeTag(String mime) {
+  final d = _MimeData.from(mime);
+  return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+          color: d.color.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(7),
+          border: Border.all(color: d.color.withOpacity(0.2))),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(d.icon, size: 12, color: d.color),
+        const SizedBox(width: 5),
+        Text(d.label,
+            style: TextStyle(color: d.color, fontSize: 10,
+                fontWeight: FontWeight.w800)),
+      ]));
+}
+
+Widget _BigBadge(String text, Color color) => Container(
+  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+  decoration: BoxDecoration(
+      color: color.withOpacity(0.1),
+      borderRadius: BorderRadius.circular(20),
+      border: Border.all(color: color.withOpacity(0.3))),
+  child: Text(text,
+      style: TextStyle(color: color, fontSize: 11,
+          fontWeight: FontWeight.w800)),
+);
+
+Widget _Section(String title) => Row(children: [
+  Container(width: 3, height: 12,
+      color: _P.accent, margin: const EdgeInsets.only(right: 8)),
+  Text(title, style: const TextStyle(color: _P.ink,
+      fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: 0.4)),
+]);
+
+class _Meta extends StatelessWidget {
+  final String l, v; final bool mono;
+  final Color? valueColor; final VoidCallback? onCopy;
+  const _Meta(this.l, this.v, {this.mono=false,
+    this.valueColor, this.onCopy});
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 9),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(l, style: const TextStyle(color: _P.muted,
+          fontSize: 9, fontWeight: FontWeight.w700, letterSpacing: 0.5)),
+      const SizedBox(height: 2),
+      Row(children: [
+        Expanded(child: SelectableText(v,
+            style: TextStyle(
+                color: valueColor ?? _P.ink,
+                fontSize: 11, fontWeight: FontWeight.w600,
+                fontFamily: mono ? 'monospace' : null))),
+        if (onCopy != null)
+          GestureDetector(onTap: onCopy,
+              child: const Padding(
+                  padding: EdgeInsets.only(left: 4),
+                  child: Icon(Icons.copy_outlined,
+                      size: 11, color: _P.muted))),
+      ]),
+    ]),
+  );
+}
+
+class _HashBlock extends StatelessWidget {
+  final String hash; final VoidCallback onCopy;
+  const _HashBlock({required this.hash, required this.onCopy});
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+    onTap: onCopy,
+    child: Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+          color: _P.green.withOpacity(0.06),
+          borderRadius: BorderRadius.circular(9),
+          border: Border.all(color: _P.green.withOpacity(0.2))),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Expanded(child: SelectableText(hash,
+            style: const TextStyle(color: _P.green,
+                fontSize: 9, fontFamily: 'monospace', height: 1.6))),
+        const Icon(Icons.copy_outlined, size: 11, color: _P.green),
+      ]),
+    ),
+  );
+}
+
+class _PreviewLabel extends StatelessWidget {
+  final IconData i; final Color c; final String t;
+  const _PreviewLabel(this.i, this.c, this.t);
+  @override
+  Widget build(BuildContext context) => Row(children: [
+    Container(width: 4, height: 16,
+        decoration: BoxDecoration(
+            color: c, borderRadius: BorderRadius.circular(2)),
+        margin: const EdgeInsets.only(right: 8)),
+    Icon(i, size: 14, color: c),
+    const SizedBox(width: 6),
+    Text(t, style: TextStyle(color: _P.ink, fontSize: 13,
+        fontWeight: FontWeight.w700)),
+  ]);
+}
+
+// ── Shimmer loading ────────────────────────────────────────────────────────
+class _ShimmerList extends StatefulWidget {
+  const _ShimmerList();
+  @override State<_ShimmerList> createState() => _ShimmerListState();
+}
+class _ShimmerListState extends State<_ShimmerList>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _ctrl;
+  late Animation<double> _anim;
+  @override void initState() {
+    super.initState();
+    _ctrl = AnimationController(vsync: this,
+        duration: const Duration(milliseconds: 1200))..repeat();
+    _anim = _ctrl.drive(Tween(begin: -1.0, end: 2.0)
+        .chain(CurveTween(curve: Curves.easeInOut)));
+  }
+  @override void dispose() { _ctrl.dispose(); super.dispose(); }
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: _anim,
+    builder: (_, __) => ListView.builder(
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
+      itemCount: 5,
+      itemBuilder: (_, i) => Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+            color: Colors.white, borderRadius: BorderRadius.circular(12)),
+        child: Row(children: [
+          _sbox(40, 40, r: 9),
+          const SizedBox(width: 10),
+          Expanded(child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start, children: [
+            _sbox(14, double.infinity),
+            const SizedBox(height: 6),
+            _sbox(10, 80),
+          ])),
+        ]),
+      ),
+    ),
+  );
+  Widget _sbox(double h, double w, {double r = 4}) => Container(
+    width: w, height: h,
+    decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(r),
+        gradient: LinearGradient(
+            colors: [
+              const Color(0xFFEEF2FF),
+              Color.lerp(const Color(0xFFEEF2FF),
+                  const Color(0xFFDDE5FF),
+                  _anim.value.clamp(0.0, 1.0))!,
+              const Color(0xFFEEF2FF),
+            ])),
+  );
+}
+
+class _ErrorState extends StatelessWidget {
+  final String m; final VoidCallback onRetry;
+  const _ErrorState({required this.m, required this.onRetry});
+  @override
+  Widget build(BuildContext context) => Center(child: Column(
+    mainAxisSize: MainAxisSize.min, children: [
+    const Icon(Icons.error_outline_rounded, size: 32, color: _P.muted),
+    const SizedBox(height: 8),
+    Padding(padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: Text(m, textAlign: TextAlign.center,
+            style: const TextStyle(color: _P.muted, fontSize: 12))),
+    const SizedBox(height: 12),
+    TextButton(onPressed: onRetry,
+        child: const Text('Retry',
+            style: TextStyle(color: _P.accent))),
+  ],
+  ));
+}
+
+class _EmptyCases extends StatelessWidget {
+  const _EmptyCases();
+  @override
+  Widget build(BuildContext context) => Center(child: Column(
+    mainAxisSize: MainAxisSize.min, children: [
+    Container(width: 56, height: 56,
+        decoration: const BoxDecoration(
+            color: _P.accentSoft, shape: BoxShape.circle),
+        child: const Icon(Icons.folder_off_outlined,
+            size: 26, color: _P.accent)),
+    const SizedBox(height: 12),
+    const Text('No cases found',
+        style: TextStyle(color: _P.ink,
+            fontSize: 14, fontWeight: FontWeight.w700)),
+    const SizedBox(height: 4),
+    const Text('Create a case first',
+        style: TextStyle(color: _P.muted, fontSize: 12)),
+  ],
+  ));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+class _MimeData {
+  final IconData icon; final Color color; final String label;
+  const _MimeData(this.icon, this.color, this.label);
   factory _MimeData.from(String mime) {
     if (mime.startsWith('image/'))
-      return const _MimeData(Icons.image_outlined,
-          Color(0xFF2563EB), 'IMAGE');
+      return const _MimeData(Icons.image_outlined, _P.accent, 'IMAGE');
     if (mime.startsWith('video/'))
-      return const _MimeData(Icons.videocam_outlined,
-          Color(0xFF7C3AED), 'VIDEO');
+      return const _MimeData(Icons.videocam_outlined, _P.purple, 'VIDEO');
     if (mime.startsWith('audio/'))
-      return const _MimeData(Icons.music_note_outlined,
-          Color(0xFF059669), 'AUDIO');
+      return const _MimeData(Icons.headphones_outlined, _P.green, 'AUDIO');
     if (mime == 'application/pdf')
-      return const _MimeData(Icons.picture_as_pdf_outlined,
-          Color(0xFFDC2626), 'PDF');
+      return const _MimeData(Icons.picture_as_pdf_outlined, _P.red, 'PDF');
     if (mime.contains('word') || mime.contains('document'))
       return const _MimeData(Icons.description_outlined,
           Color(0xFF0284C7), 'DOC');
-    return const _MimeData(Icons.insert_drive_file_outlined,
-        Color(0xFF64748B), 'FILE');
+    return const _MimeData(Icons.insert_drive_file_outlined, _P.muted, 'FILE');
   }
 }
 
-// ── URL fixer ───────────────────────────────────────────────────────
-String fixStorageUrl(String url) {
-  if (url.isEmpty) return url;
-  if (url.contains('firebasestorage.googleapis.com')) return url;
-  final regex = RegExp(r'https://storage\.googleapis\.com/([^/]+)/(.+)');
-  final match = regex.firstMatch(url);
-  if (match != null) {
-    final bucket  = match.group(1)!;
-    final path    = match.group(2)!;
-    final encoded = Uri.encodeComponent(path);
-    return 'https://firebasestorage.googleapis.com/v0/b/$bucket/o/$encoded?alt=media';
-  }
-  return url;
+Color _chainColor(String s) => switch (s) {
+  'anchored' => _P.green,
+  'pending'  => _P.orange,
+  'failed'   => _P.red,
+  _          => _P.muted,
+};
+
+String _fmtSize(dynamic b) {
+  if (b == null) return '—';
+  final n = b is int ? b : int.tryParse('$b') ?? 0;
+  if (n < 1024)    return '$n B';
+  if (n < 1048576) return '${(n/1024).toStringAsFixed(1)} KB';
+  return '${(n/1048576).toStringAsFixed(1)} MB';
 }
 
-// ── Firebase Storage URL getter ──────────────────────────────────────
-// CORS is configured on the bucket — Image.network works on all platforms
-// Uses Firebase REST API to get token URL (works on web + native)
+String _fmtDate(String? raw) {
+  if (raw == null) return '—';
+  final t = DateTime.tryParse(raw);
+  if (t == null) return raw;
+  final l = t.toLocal();
+  return '${l.day.toString().padLeft(2,'0')}/'
+      '${l.month.toString().padLeft(2,'0')}/${l.year}  '
+      '${l.hour.toString().padLeft(2,'0')}:'
+      '${l.minute.toString().padLeft(2,'0')}';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  FIREBASE STORAGE URL — REST API, works on ALL platforms, no dart:ui_web
+// ─────────────────────────────────────────────────────────────────────────────
 Future<String> getStorageDownloadUrl(
     String storagePath, String bucket) async {
   if (storagePath.isEmpty) return '';
-
   try {
-    // Firebase REST API — returns download token URL
-    // Works on ALL platforms (web, Windows, Android, iOS)
-    // Token URL bypasses any remaining CORS issues
-    final encoded  = Uri.encodeComponent(storagePath);
-    final apiUrl   =
+    final encoded = Uri.encodeComponent(storagePath);
+    final apiUrl  =
         'https://firebasestorage.googleapis.com/v0/b/$bucket/o/$encoded';
     final response = await http.get(Uri.parse(apiUrl));
     if (response.statusCode == 200) {
       final data  = jsonDecode(response.body) as Map<String, dynamic>;
       final token = data['downloadTokens'] as String? ?? '';
-      if (token.isNotEmpty) {
-        return '$apiUrl?alt=media&token=$token';
-      }
+      if (token.isNotEmpty) return '$apiUrl?alt=media&token=$token';
       return '$apiUrl?alt=media';
     }
   } catch (_) {}
-
-  // Fallback: Firebase Storage SDK (native only)
   if (!kIsWeb) {
     try {
       return await FirebaseStorage.instance
           .ref().child(storagePath).getDownloadURL();
-    } catch (e) {
-      debugPrint('🔴 Storage SDK error: $e');
-    }
+    } catch (e) { debugPrint('Storage SDK: $e'); }
   }
   return '';
-}
-
-// ── Color palette ─────────────────────────────────────────
-class EVC {
-  final bool isDark;
-  EVC(this.isDark);
-  Color get bg         => isDark ? const Color(0xFF0B0F1A) : const Color(0xFFF0F4FF);
-  Color get card       => isDark ? const Color(0xFF111827) : Colors.white;
-  Color get inputBg    => isDark ? const Color(0xFF1A2540) : const Color(0xFFF8FAFF);
-  Color get border     => isDark ? const Color(0xFF1E2D45) : const Color(0xFFE2E8F0);
-  Color get txtPrimary => isDark ? const Color(0xFFF1F5F9) : const Color(0xFF0F172A);
-  Color get txtSecond  => isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
-  Color get txtMuted   => isDark ? const Color(0xFF475569) : const Color(0xFF94A3B8);
-  Color get accent     => const Color(0xFF2563EB);
 }

@@ -1,6 +1,6 @@
 {
-    "name": "evidence_app",
-    "short_name": "evidence_app",
+    "name": "EvidenceChain",
+    "short_name": "EvidenceChain",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
